@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1440">
+<title>PostHog · Engineering Impact (last 90 days)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .card { transition: transform .15s ease, box-shadow .15s ease; }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 28px -10px rgba(0,0,0,.18); }
+  .seg { height: 14px; }
+  .seg:first-child { border-top-left-radius: 999px; border-bottom-left-radius: 999px; }
+  .seg:last-child { border-top-right-radius: 999px; border-bottom-right-radius: 999px; }
+  details > summary { cursor: pointer; list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  .pill { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+<main class="max-w-[1440px] mx-auto px-6 py-5">
+
+  <header class="flex items-baseline justify-between gap-4 mb-3">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">PostHog · Most impactful engineers <span class="text-slate-400 font-normal">— last 90 days</span></h1>
+      <p class="text-sm text-slate-600 mt-1">Impact = transparent composite of <b>5 signals</b>: surviving code, substantive review leverage, cross-area reach, incident-fix authorship, and review-graph centrality. Every number on this page traces to a formula in the methodology box. <a class="text-blue-600 underline" href="https://github.com/PostHog/posthog" target="_blank">Source repo →</a></p>
+    </div>
+    <div class="text-right text-xs text-slate-500 shrink-0">
+      <div id="meta-window"></div>
+      <div id="meta-counts"></div>
+      <div>Generated <span id="meta-stamp"></span></div>
+    </div>
+  </header>
+
+  <section class="grid grid-cols-12 gap-5">
+
+    <!-- LEFT: top 5 cards -->
+    <div class="col-span-8">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Top 5 by impact</h2>
+        <div class="text-[11px] text-slate-500 flex items-center gap-3 flex-wrap">
+          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#0ea5e9"></span>Surviving code 25%</span>
+          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#22c55e"></span>Review leverage 25%</span>
+          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#a855f7"></span>Cross-area 15%</span>
+          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#f97316"></span>Incident work 20%</span>
+          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#eab308"></span>Centrality 15%</span>
+        </div>
+      </div>
+      <div id="cards" class="grid grid-cols-1 gap-3"></div>
+    </div>
+
+    <!-- RIGHT: comparison + methodology + graph -->
+    <aside class="col-span-4 flex flex-col gap-4">
+      <div class="bg-white rounded-xl border border-slate-200 p-4">
+        <h3 class="text-sm font-semibold mb-2">Why not just count PRs?</h3>
+        <p class="text-xs text-slate-600 mb-2">Ranking by raw PR count finds high <i>output</i> but misses high <i>leverage</i>. Below: the 5 highest-PR engineers and where each lands on the impact ranking.</p>
+        <table class="w-full text-xs"><thead><tr class="text-slate-500 text-left"><th class="py-1">Engineer</th><th class="py-1 text-right">PRs</th><th class="py-1 text-right">Impact rank</th></tr></thead><tbody id="comparison-table"></tbody></table>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4">
+        <h3 class="text-sm font-semibold mb-1">Top-5 review graph</h3>
+        <p class="text-[11px] text-slate-500 mb-1">Edge = reviewer → PR author. Node size = PageRank. Hover for counts.</p>
+        <div id="graph" style="height:220px"></div>
+      </div>
+
+      <details class="bg-white rounded-xl border border-slate-200 p-4 text-xs" open>
+        <summary class="font-semibold text-sm flex justify-between items-center">Methodology <span class="text-slate-400 text-[11px]">click to collapse</span></summary>
+        <div class="mt-2 space-y-2 text-slate-700 leading-relaxed">
+          <p><b>Window:</b> merged PRs in the last <b>90 days</b>. Engineers with fewer than <b>3 merged PRs</b> are excluded (signal too noisy). Bots and the <code>posthog</code> service account are excluded.</p>
+          <p><b>The 5 signals</b> (each z-scored across the eligible pool, then weighted):</p>
+          <ul class="list-disc pl-5 space-y-1">
+            <li><b>Surviving code (25%)</b> — sum of additions per merged PR, capped at 2,000 lines/PR to prevent one big PR from dominating. PRs whose title is reverted by a later "Revert ..." PR receive 40% credit.</li>
+            <li><b>Review leverage (25%)</b> — number of PRs where the engineer left an <i>approving</i> review with at least one comment ≥25 chars (filters out "lgtm" / "👍").</li>
+            <li><b>Cross-area reach (15%)</b> — number of distinct top-level directories touched across their merged PRs. Captures breadth of trust.</li>
+            <li><b>Incident work (20%)</b> — merged PRs that closed an issue (or were themselves) labeled <code>bug / incident / p0 / p1 / sev / hotfix / regression / outage</code>.</li>
+            <li><b>Review-graph centrality (15%)</b> — PageRank (α=0.85) on the directed reviewer→author graph. Whose review do other high-impact people seek?</li>
+          </ul>
+          <p><b>Composite</b> = Σ weight × z-score. We then min-max normalize to 0–100 for display. The stacked bar on each card shows each signal's <i>weighted contribution</i> to the composite — positive segments to the right, negative (below-average) signals are clipped to zero in the bar but reflected in the score.</p>
+          <p><b>Limitations</b> — we don't read code semantics, so "complexity" is approximated by reach + size cap. Outside contributors and very new hires are under-counted. Review centrality is sensitive to who reviews whom; a small clique can inflate each other.</p>
+        </div>
+      </details>
+    </aside>
+  </section>
+
+  <footer class="mt-5 text-[11px] text-slate-500">
+    Data: GitHub GraphQL API · github.com/PostHog/posthog · static page, all numbers precomputed in <code>web/data.json</code>.
+  </footer>
+</main>
+
+<script>
+const COLORS = {
+  surviving_code: "#0ea5e9",
+  review_leverage: "#22c55e",
+  cross_area: "#a855f7",
+  incident_work: "#f97316",
+  review_centrality: "#eab308",
+};
+const NAMES = {
+  surviving_code: "Surviving code",
+  review_leverage: "Review leverage",
+  cross_area: "Cross-area reach",
+  incident_work: "Incident work",
+  review_centrality: "Centrality",
+};
+
+(async () => {
+  const data = await (await fetch("data.json?v=" + Date.now())).json();
+  const since = new Date(data.window_since);
+  document.getElementById("meta-window").textContent = `Window: ${since.toISOString().slice(0,10)} → today`;
+  document.getElementById("meta-counts").textContent = `${data.n_prs.toLocaleString()} merged PRs · ${data.n_eligible} eligible engineers`;
+  document.getElementById("meta-stamp").textContent = new Date().toISOString().replace("T"," ").slice(0,16) + " UTC";
+
+  // Cards
+  const cards = document.getElementById("cards");
+  const top5 = data.engineers.slice(0, 5);
+  // Build stacked bars: only positive weighted contributions; if all negative, fill with neutral
+  for (const e of top5) {
+    const bd = e.breakdown;
+    const positives = Object.entries(bd).filter(([_, v]) => v > 0);
+    const totalPos = positives.reduce((s, [_, v]) => s + v, 0) || 1;
+    const segments = positives.map(([k, v]) => ({k, pct: (v/totalPos)*100, contrib: v}));
+    const segHTML = segments.map(s => `<div class="seg pill" style="width:${s.pct.toFixed(2)}%; background:${COLORS[s.k]}" title="${NAMES[s.k]}: +${s.contrib.toFixed(2)} weighted z"></div>`).join("");
+    const allBars = `<div class="flex w-full h-3.5 bg-slate-100 rounded-full overflow-hidden">${segHTML || '<div class="w-full bg-slate-200"></div>'}</div>`;
+
+    const m = e.metrics;
+    const metricsHTML = `
+      <div class="grid grid-cols-5 gap-2 text-[11px] text-center mt-2">
+        ${[
+          ["surviving_code", `${Math.round(m.surviving_code).toLocaleString()}`, "lines (capped)"],
+          ["review_leverage", m.review_leverage, "deep reviews"],
+          ["cross_area", m.cross_area, "areas touched"],
+          ["incident_work", m.incident_work, "incident PRs"],
+          ["review_centrality", m.review_centrality.toFixed(3), "PageRank"],
+        ].map(([k, v, label]) =>
+          `<div class="rounded-md py-1 px-1" style="background:${COLORS[k]}1a">
+             <div class="font-semibold pill text-slate-800">${v}</div>
+             <div class="text-slate-500">${label}</div>
+           </div>`
+        ).join("")}
+      </div>`;
+
+    const topPRsHTML = e.top_prs.map(p =>
+      `<a class="block truncate text-[11px] text-blue-700 hover:underline" target="_blank" href="https://github.com/PostHog/posthog/pull/${p.number}">#${p.number} · ${p.title.replace(/</g,"&lt;")}</a>`
+    ).join("");
+
+    const areasHTML = e.areas.slice(0, 6).map(a => `<span class="inline-block bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 text-[10px] mr-1 mb-1">${a}</span>`).join("");
+
+    cards.insertAdjacentHTML("beforeend", `
+      <article class="card bg-white border border-slate-200 rounded-xl p-4">
+        <div class="flex items-start gap-4">
+          <img class="w-12 h-12 rounded-full border" src="https://github.com/${e.login}.png?size=96" alt="${e.login}">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-baseline justify-between gap-2 flex-wrap">
+              <div class="flex items-baseline gap-2">
+                <span class="text-xs text-slate-400 font-mono">#${e.rank}</span>
+                <a href="https://github.com/${e.login}" target="_blank" class="font-semibold text-slate-900 hover:underline">${e.login}</a>
+                <span class="text-xs text-slate-500">· ${m.pr_count} merged PRs</span>
+              </div>
+              <div class="text-right">
+                <div class="text-xl font-bold pill text-slate-900">${e.score.toFixed(1)}<span class="text-xs font-normal text-slate-400"> / 100</span></div>
+                <div class="text-[10px] text-slate-500">composite z = ${e.raw_composite.toFixed(2)}</div>
+              </div>
+            </div>
+            <div class="text-sm text-slate-700 mt-1">${e.headline}</div>
+            <div class="mt-2">${allBars}</div>
+            ${metricsHTML}
+            <div class="mt-2 flex flex-wrap">${areasHTML}</div>
+            <div class="mt-1">${topPRsHTML}</div>
+          </div>
+        </div>
+      </article>
+    `);
+  }
+
+  // Comparison table
+  const cmp = document.getElementById("comparison-table");
+  for (const x of data.by_pr_count) {
+    const onTop5 = data.top5.includes(x.login);
+    cmp.insertAdjacentHTML("beforeend",
+      `<tr class="border-t border-slate-100">
+         <td class="py-1"><a class="text-blue-700 hover:underline" href="https://github.com/${x.login}" target="_blank">${x.login}</a></td>
+         <td class="py-1 text-right pill">${x.pr_count}</td>
+         <td class="py-1 text-right pill ${onTop5 ? 'text-emerald-600 font-semibold' : 'text-slate-500'}">#${x.rank_by_impact}${onTop5 ? ' ✓' : ''}</td>
+       </tr>`);
+  }
+
+  // Network graph: simple circular layout
+  const N = data.graph.nodes;
+  const E = data.graph.edges;
+  const cx = 0, cy = 0, R = 1;
+  const pos = {};
+  N.forEach((n, i) => {
+    const a = (i / N.length) * 2 * Math.PI - Math.PI/2;
+    pos[n.id] = [cx + R * Math.cos(a), cy + R * Math.sin(a)];
+  });
+  const edgeTraces = E.map(e => ({
+    type: "scatter", mode: "lines",
+    x: [pos[e.source][0], pos[e.target][0]],
+    y: [pos[e.source][1], pos[e.target][1]],
+    line: { width: 1 + Math.log(e.weight + 1) * 1.4, color: "#94a3b8" },
+    hoverinfo: "text", text: `${e.source} → ${e.target} · ${e.weight} reviews`,
+    showlegend: false,
+  }));
+  const sizes = N.map(n => 24 + n.centrality * 700);
+  const nodeTrace = {
+    type: "scatter", mode: "markers+text",
+    x: N.map(n => pos[n.id][0]), y: N.map(n => pos[n.id][1]),
+    text: N.map(n => n.id), textposition: "top center",
+    marker: { size: sizes, color: "#0ea5e9", line: { color: "white", width: 2 } },
+    hovertext: N.map(n => `${n.id}<br>impact ${n.score.toFixed(1)}<br>PageRank ${n.centrality.toFixed(3)}`),
+    hoverinfo: "text", showlegend: false,
+  };
+  Plotly.newPlot("graph", [...edgeTraces, nodeTrace], {
+    margin: { l: 10, r: 10, t: 10, b: 10 },
+    xaxis: { visible: false, range: [-1.6, 1.6] },
+    yaxis: { visible: false, range: [-1.4, 1.4], scaleanchor: "x" },
+    paper_bgcolor: "white", plot_bgcolor: "white",
+  }, { displayModeBar: false, responsive: true });
+})();
+</script>
+</body>
+</html>

@@ -99,6 +99,8 @@ def main():
     incident = defaultdict(int)
     pr_count = defaultdict(int)
     pr_count_recent = defaultdict(int)   # last 7 days
+    pr_with_issue = defaultdict(int)     # # PRs that closed a tracked issue (intentional work)
+    pr_reverted = defaultdict(int)       # # of this engineer's PRs that were reverted in window
     weekly_buckets = defaultdict(lambda: [0]*WEEK_BUCKETS)  # per-engineer weekly PR counts
     top_prs = defaultdict(list)
     area_owners = defaultdict(Counter)  # area -> Counter(login -> # PRs touching it)
@@ -106,6 +108,9 @@ def main():
     # window start in seconds since epoch for bucketing
     win_start = datetime.fromisoformat(raw["window_since"].replace("Z","+00:00"))
     win_span = (NOW - win_start).total_seconds()
+    # Map: original-pr-title (lower) -> author. Used to attribute the revert to the author
+    # whose PR got reverted. We populate after iterating PRs.
+    title_to_author = {}
 
     for pr in prs:
         author = (pr.get("author") or {}).get("login")
@@ -140,8 +145,13 @@ def main():
                 area_owners[a][author] += 1
 
         labels = [l["name"] for l in (pr.get("labels") or {}).get("nodes", []) or []]
-        for ci in (pr.get("closingIssuesReferences") or {}).get("nodes", []) or []:
+        closing_nodes = (pr.get("closingIssuesReferences") or {}).get("nodes", []) or []
+        if closing_nodes:
+            pr_with_issue[author] += 1
+        for ci in closing_nodes:
             labels.extend(l["name"] for l in (ci.get("labels") or {}).get("nodes", []) or [])
+        # Track this PR's title→author so a later "Revert ..." PR can attribute back.
+        title_to_author[pr.get("title", "").strip().lower()] = author
         is_incident = any(INCIDENT_LABEL_RE.search(l) for l in labels)
         if is_incident:
             incident[author] += 1
@@ -149,13 +159,23 @@ def main():
         approx = adds + 50 * sum(1 for l in labels if INCIDENT_LABEL_RE.search(l))
         top_prs[author].append((approx, pr["title"], pr["number"], list(areas_for_pr)))
 
+    # Quality signal: revert attribution. For each "Revert X" PR, find the author of X
+    # within this window and increment their pr_reverted count.
+    for orig_title in revert_titles:
+        a = title_to_author.get(orig_title)
+        if a:
+            pr_reverted[a] += 1
+
     eligible = {a for a, n in pr_count.items() if n >= MIN_PRS}
     print(f"eligible engineers (>= {MIN_PRS} PRs): {len(eligible)}", file=sys.stderr)
 
     metrics = {}
     for a in eligible:
+        n = pr_count[a]
+        reverted = pr_reverted.get(a, 0)
+        with_issue = pr_with_issue.get(a, 0)
         metrics[a] = {
-            "pr_count": pr_count[a],
+            "pr_count": n,
             "surviving_code": surviving[a],
             "review_leverage": review_leverage.get(a, 0),
             "cross_area": len(cross_area_real[a]),  # real product areas only
@@ -163,6 +183,11 @@ def main():
             "review_centrality": pr_rank.get(a, 0.0),
             "areas": sorted(cross_area_real[a]),
             "areas_all": sorted(cross_area[a]),  # kept for transparency
+            # Quality signals (informational, NOT in the composite — see methodology):
+            "revert_count": reverted,
+            "revert_rate": round(reverted / n, 4) if n else 0.0,
+            "issue_link_count": with_issue,
+            "issue_link_rate": round(with_issue / n, 4) if n else 0.0,
         }
 
     pool = list(metrics.values())
@@ -275,6 +300,7 @@ def main():
             "score": norm[a],
             "raw_composite": round(composites[a], 4),
             "metrics": {k: m[k] for k in ["pr_count","surviving_code","review_leverage","cross_area","incident_work","review_centrality"]},
+            "quality": {k: m[k] for k in ["revert_count","revert_rate","issue_link_count","issue_link_rate"]},
             "z": z_per_signal[a],
             "areas": m["areas"][:10],
             "breakdown": b,
@@ -374,6 +400,12 @@ def main():
             "headline": e["headline"], "one_liner": e["one_liner"],
             "metrics": e["metrics"], "breakdown": e["breakdown"],
             "areas": e["areas"][:6], "momentum": e["momentum"],
+            "primary_signal": e.get("primary_signal"),
+            "peer_phrase": e.get("peer_phrase"),
+            "signature_pr": e.get("signature_pr"),
+            "weekly": e.get("weekly", []),
+            "raw_composite": e.get("raw_composite"),
+            "quality": e.get("quality", {}),
             "top_prs": e["top_prs"][:2],
         }
 

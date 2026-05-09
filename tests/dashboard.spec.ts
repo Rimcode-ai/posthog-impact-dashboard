@@ -164,6 +164,62 @@ test.describe("Ask AI", () => {
   });
 });
 
+test.describe("Compare drawer", () => {
+  test("selecting two engineers opens a side-by-side comparison with a radar", async ({ page }) => {
+    await page.goto(URL, { waitUntil: "networkidle" });
+    await page.locator("button[data-tab='explore']").click();
+    await page.waitForSelector("#explore-table tr");
+
+    const checkboxes = page.locator("#explore-table input[data-cmp]");
+    await checkboxes.nth(0).check();
+    await checkboxes.nth(1).check();
+
+    const drawer = page.locator("#compare-drawer");
+    await expect(drawer).toBeVisible();
+    // Two cards in the drawer, one radar
+    await expect(drawer.locator(".col-span-6, .col-span-12")).toHaveCount(3); // 2 cards + 1 radar slot
+    await expect(drawer.locator("#compare-radar svg")).toBeVisible();
+
+    // Trying to tick a 3rd should be disabled (UI guard)
+    await expect(checkboxes.nth(2)).toBeDisabled();
+
+    // Close clears selection
+    await page.locator("#compare-close").click();
+    await expect(drawer).toBeHidden();
+  });
+});
+
+test.describe("Leadership digest", () => {
+  test("button opens a non-empty markdown digest", async ({ page }) => {
+    await page.goto(URL, { waitUntil: "networkidle" });
+    await page.locator("#digest-btn").click();
+    const ta = page.locator("#digest-text");
+    await expect(ta).toBeVisible();
+    const text = await ta.inputValue();
+    expect(text.length).toBeGreaterThan(200);
+    expect(text).toMatch(/Top 5 by composite impact/);
+    expect(text).toMatch(/Methodology/);
+  });
+});
+
+test.describe("Quality signals", () => {
+  test("revert rate and issue-link rate are visible in the explore table", async ({ page }) => {
+    await page.goto(URL, { waitUntil: "networkidle" });
+    await page.locator("button[data-tab='explore']").click();
+    await page.waitForSelector("#explore-table tr");
+    // Header includes the two quality columns
+    const headers = await page.locator("#tab-explore thead th").allInnerTexts();
+    expect(headers.some(h => /Rev%/.test(h))).toBeTruthy();
+    expect(headers.some(h => /Issue%/.test(h))).toBeTruthy();
+    // First-row last two cells render percentages
+    const cells = page.locator("#explore-table tr").first().locator("td");
+    const revText = await cells.nth(10).innerText();
+    const issueText = await cells.nth(11).innerText();
+    expect(revText).toMatch(/%|—/);
+    expect(issueText).toMatch(/%|—/);
+  });
+});
+
 test.describe("Methodology tab", () => {
   test("shows the formula and the limitations panel", async ({ page }) => {
     await page.goto(URL, { waitUntil: "networkidle" });

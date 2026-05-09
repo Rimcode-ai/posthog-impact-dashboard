@@ -61,7 +61,10 @@
   <section id="tab-brief" class="space-y-6">
     <div class="grid grid-cols-12 gap-5">
       <div class="col-span-8 grad-card border border-slate-200 rounded-2xl p-5">
-        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">Executive summary</div>
+        <div class="flex items-center justify-between">
+          <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">Executive summary</div>
+          <button id="digest-btn" class="text-[11px] px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700">Copy weekly digest →</button>
+        </div>
         <h1 class="text-xl font-semibold text-slate-900 mb-3">The most impactful PostHog engineers, last 90 days</h1>
         <ul id="exec-brief" class="space-y-1.5 text-[14px] text-slate-700 md"></ul>
       </div>
@@ -126,12 +129,17 @@
       <div class="col-span-8 bg-white border border-slate-200 rounded-xl p-4">
         <div class="flex items-center justify-between mb-2">
           <h3 class="text-sm font-semibold">All eligible engineers <span class="text-slate-400 font-normal" id="explore-count"></span></h3>
-          <input id="explore-search" placeholder="filter by login..." class="text-xs border border-slate-200 rounded-lg px-2 py-1 w-48"/>
+          <div class="flex items-center gap-2">
+            <span id="compare-status" class="text-[11px] text-slate-500">Tick up to 2 to compare</span>
+            <button id="compare-clear" class="text-[11px] text-blue-600 hover:underline hidden">clear</button>
+            <input id="explore-search" placeholder="filter by login..." class="text-xs border border-slate-200 rounded-lg px-2 py-1 w-48"/>
+          </div>
         </div>
         <div class="overflow-auto" style="max-height: 70vh">
           <table class="w-full text-xs">
             <thead class="sticky top-0 bg-white">
               <tr class="text-slate-500 text-left border-b border-slate-100">
+                <th class="py-1.5 px-2"></th>
                 <th class="py-1.5 px-2">#</th>
                 <th class="py-1.5 px-2">Engineer</th>
                 <th class="py-1.5 px-2 text-right">Score</th>
@@ -141,6 +149,8 @@
                 <th class="py-1.5 px-2 text-right">Areas</th>
                 <th class="py-1.5 px-2 text-right">Incidents</th>
                 <th class="py-1.5 px-2 text-right">Cent.</th>
+                <th class="py-1.5 px-2 text-right" title="% of merged PRs that were later reverted within the window">↩ Rev%</th>
+                <th class="py-1.5 px-2 text-right" title="% of merged PRs that closed a tracked issue">🔗 Issue%</th>
               </tr>
             </thead>
             <tbody id="explore-table"></tbody>
@@ -149,6 +159,36 @@
       </div>
     </div>
   </section>
+
+  <!-- compare drawer (Explore) -->
+  <div id="compare-drawer" class="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-2xl z-40 hidden">
+    <div class="max-w-[1440px] mx-auto px-6 py-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-semibold text-sm">Side-by-side comparison</h3>
+        <div class="flex items-center gap-2">
+          <button id="compare-copy" class="text-xs px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700">Copy as markdown</button>
+          <button id="compare-close" class="text-xs px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700">Close</button>
+        </div>
+      </div>
+      <div id="compare-body" class="grid grid-cols-12 gap-5"></div>
+    </div>
+  </div>
+
+  <!-- digest modal (Brief) -->
+  <div id="digest-modal" class="fixed inset-0 bg-slate-900/50 hidden items-center justify-center z-50">
+    <div class="bg-white rounded-2xl p-6 w-[640px] max-w-[92vw] shadow-2xl">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-semibold text-base">Leadership digest <span class="text-slate-400 text-xs font-normal">(Slack / email ready)</span></h3>
+        <div class="flex items-center gap-2">
+          <button id="digest-copy" class="text-xs px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-700">Copy</button>
+          <button id="digest-close" class="text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700">Close</button>
+        </div>
+      </div>
+      <p class="text-xs text-slate-500 mb-2">Auto-generated from the live data on this page. Pastes cleanly into Slack, email, or a Notion doc.</p>
+      <textarea id="digest-text" rows="18" class="w-full text-[12px] font-mono border border-slate-200 rounded-lg p-2 leading-relaxed"></textarea>
+      <p class="text-[10px] text-slate-400 mt-2">Numbers reflect the 90-day window ending today. Re-run <code>fetch.py + analyze.py</code> to refresh.</p>
+    </div>
+  </div>
 
   <!-- ===================== ASK ASKY ===================== -->
   <section id="tab-ask" class="hidden">

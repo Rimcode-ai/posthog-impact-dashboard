@@ -283,8 +283,11 @@
   // ---------- pipeline ----------
 
   function compactRoster(STATE) {
-    const top = (STATE.full && STATE.full.engineers) || (STATE.core.top5 || []);
-    return top.slice(0, 50).map(e => ({
+    // Send the FULL eligible roster (not a top-N cap). Token-cheap (~7K tokens for
+    // 118 engineers) and ensures the Researcher can never miss a mid-rank login
+    // the user explicitly asked about.
+    const all = (STATE.full && STATE.full.engineers) || (STATE.core.top5 || []);
+    return all.map(e => ({
       login: e.login,
       rank: e.rank,
       score: e.score,
@@ -297,11 +300,28 @@
       momentum: e.momentum?.label,
       headline: e.headline,
       areas: (e.areas || []).slice(0, 5),
+      delta_vs_pr_count: ((STATE.core?.by_pr_count || []).find(x => x.login === e.login) || {}).delta,
     }));
   }
 
+  // Find any engineer login the user explicitly named in their question. Used as a
+  // defensive override so the Researcher can never silently drop the subject of the
+  // question (e.g. "Why does pauldambra rank lower..." returning 0 logins).
+  function loginsMentionedInQuestion(question, knownLogins) {
+    const q = (question || "").toLowerCase();
+    const hits = new Set();
+    for (const login of knownLogins) {
+      const lc = login.toLowerCase();
+      if (lc.length < 3) continue;
+      // Word-bounded against the login charset (letters/digits/hyphen).
+      const re = new RegExp(`(^|[^a-z0-9-])${lc.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9-]|$)`, "i");
+      if (re.test(q)) hits.add(login);
+    }
+    return hits;
+  }
+
   const RESEARCHER_SYSTEM = `You are the Researcher agent for the PostHog Engineering Impact dashboard.
-You receive a user question and a JSON snapshot of the dataset (top 50 engineers by composite impact, with metrics + momentum + areas).
+You receive a user question and a JSON snapshot of the dataset (every eligible engineer, with metrics + momentum + areas + delta_vs_pr_count).
 
 Your job: select the SPECIFIC subset of records and fields that the Analyst will need to answer the question, and return that subset as strict JSON.
 
@@ -313,7 +333,12 @@ Output schema (STRICT, no prose):
   "extra_notes": "<one sentence flagging caveats or computations the analyst should do>"
 }
 
-Rules: Only choose logins that appear in the provided dataset. Never invent handles. Keep it tight.`;
+Rules:
+- Only choose logins that appear in the provided dataset. Never invent handles.
+- If the user's question explicitly names one or more engineer logins (e.g. "pauldambra", "webjunkie"), those logins MUST appear in selected_logins — their data is exactly what the Analyst needs, even (especially) when the question is "why does <login> rank lower than expected".
+- For broad questions ("top 5 by impact", "who carries on-call") select the relevant 5–10 logins.
+- For comparison questions ("X vs Y") include both.
+- Keep selected_logins to ≤10. Never return an empty selected_logins array if the question references engineers in any form — pick at least the most relevant 3.`;
 
   const ANALYST_SYSTEM = `You are the Analyst agent for the PostHog Engineering Impact dashboard.
 You receive: the user question, the Researcher's selected slice, and the methodology summary.
@@ -437,7 +462,34 @@ The score is min-max normalized to 0–100 for display.`;
       // 3) Analyst
       setStep(2, "active");
       const selectedSet = new Set(researcherJson.selected_logins.map(s => s.toLowerCase()));
+
+      // Defensive override: any engineer login the user EXPLICITLY named in the
+      // question must be in the slice, even if the Researcher missed them. Without
+      // this, a question like "Why does pauldambra rank lower than expected..."
+      // could return an empty slice and the Analyst would say "no records found".
+      const knownLogins = (slice.map(e => e.login)) || [];
+      const mentioned = loginsMentionedInQuestion(question, knownLogins);
+      let forcedAdditions = [];
+      for (const login of mentioned) {
+        if (!selectedSet.has(login.toLowerCase())) {
+          selectedSet.add(login.toLowerCase());
+          forcedAdditions.push(login);
+        }
+      }
+
       const filteredSlice = slice.filter(e => selectedSet.has(e.login.toLowerCase()));
+
+      // If the slice is STILL empty (rare edge case: vague question, no name, no
+      // researcher hit), fall back to the top-5 by impact so the Analyst at least
+      // has something concrete to ground in.
+      if (filteredSlice.length === 0) {
+        const top5 = slice.slice(0, 5);
+        for (const e of top5) {
+          selectedSet.add(e.login.toLowerCase());
+          filteredSlice.push(e);
+        }
+        forcedAdditions = forcedAdditions.concat(["<top5 fallback>"]);
+      }
       const analystUser = `Question: ${pg.sanitized}
 
 Methodology summary:
@@ -448,7 +500,7 @@ Researcher notes: ${researcherJson.extra_notes || "—"}
 
 Selected slice (use ONLY these records):
 ${JSON.stringify(filteredSlice, null, 0)}`;
-      const aRun = await lsCreateRun(traceRoot, "analyst", { question: pg.sanitized, slice_size: filteredSlice.length });
+      const aRun = await lsCreateRun(traceRoot, "analyst", { question: pg.sanitized, slice_size: filteredSlice.length, forced_additions: forcedAdditions });
       const answer = await llmCall({ system: ANALYST_SYSTEM, user: analystUser, maxTokens: 600 });
       await lsEndRun(aRun, { answer_chars: answer.length });
       if (!answer || !answer.trim()) {

@@ -239,7 +239,10 @@
           <div id="seed-questions" class="space-y-1.5"></div>
         </div>
         <div class="bg-white border border-slate-200 rounded-xl p-4">
-          <h3 class="text-sm font-semibold mb-1">Agent pipeline</h3>
+          <div class="flex items-center justify-between mb-1">
+            <h3 class="text-sm font-semibold">Agent pipeline</h3>
+            <span id="provider-chip" class="text-[10px] text-slate-500 pill">via —</span>
+          </div>
           <p class="text-[11px] text-slate-500 mb-2">Updates live as Ask AI processes each question.</p>
           <ol id="pipeline" class="space-y-1.5 text-xs"></ol>
         </div>
@@ -300,21 +303,35 @@
 </main>
 
 <div id="key-modal" class="fixed inset-0 bg-slate-900/50 hidden items-center justify-center z-50">
-  <div class="bg-white rounded-2xl p-6 w-[440px] shadow-2xl">
+  <div class="bg-white rounded-2xl p-6 w-[460px] shadow-2xl">
     <h3 class="font-semibold text-base mb-1">Configure Ask AI</h3>
-    <p class="text-xs text-slate-500 mb-3">Keys are stored only in your browser's <code>localStorage</code> and never leave this page (calls go directly to Anthropic / LangSmith from your browser).</p>
-    <label class="text-xs text-slate-600">Anthropic API key (for arbitrary questions)</label>
-    <input id="anthropic-key" type="password" placeholder="sk-ant-..." class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-2"/>
-    <label class="text-xs text-slate-600">LangSmith API key (optional, for tracing)</label>
+    <p class="text-xs text-slate-500 mb-3">Keys never leave this browser. Calls go directly from your browser to the selected provider's API.</p>
+
+    <label class="text-xs text-slate-600">Provider</label>
+    <select id="provider-select" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-3 bg-white">
+      <option value="anthropic">Anthropic Claude</option>
+      <option value="openai">OpenAI</option>
+      <option value="gemini">Google Gemini</option>
+    </select>
+
+    <label class="text-xs text-slate-600" id="provider-key-label">Anthropic API key</label>
+    <input id="provider-key" type="password" placeholder="sk-ant-..." class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-2"/>
+
+    <label class="text-xs text-slate-600">Model <span class="text-slate-400">(default works fine)</span></label>
+    <input id="provider-model" type="text" placeholder="claude-haiku-4-5-20251001" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-3"/>
+
+    <label class="text-xs text-slate-600">LangSmith API key <span class="text-slate-400">(optional, for tracing)</span></label>
     <input id="langsmith-key" type="password" placeholder="ls__..." class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-2"/>
+
     <label class="text-xs text-slate-600">LangSmith project name</label>
-    <input id="langsmith-project" type="text" placeholder="posthog-impact-asky" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-3"/>
+    <input id="langsmith-project" type="text" placeholder="posthog-impact-askai" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-3"/>
+
     <div class="flex justify-end gap-2">
       <button id="key-clear" class="text-xs px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-800">Clear</button>
       <button id="key-cancel" class="text-xs px-3 py-1.5 rounded-lg bg-slate-100">Cancel</button>
       <button id="key-save" class="text-xs px-3 py-1.5 rounded-lg bg-slate-900 text-white">Save</button>
     </div>
-    <p class="text-[10px] text-slate-400 mt-3">Without a key, Ask AI still works with <b>baked answers</b> for the seed questions — pre-computed from the dataset, no API call needed.</p>
+    <p class="text-[10px] text-slate-400 mt-3">Pick a provider above; the haiku/mini/flash tier is enough for grounded extraction. Each provider's key + model is stored independently, so switching providers preserves your prior keys.</p>
   </div>
 </div>
 

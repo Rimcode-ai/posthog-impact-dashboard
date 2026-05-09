@@ -162,6 +162,39 @@ test.describe("Ask AI", () => {
     // Hard assertion: there is no canned "answer" content in the chat — only the welcome bubble.
     expect(chatHtml).not.toMatch(/Top 5 by composite impact/);
   });
+
+  test("provider switch persists across modal open/close (Anthropic / OpenAI / Gemini)", async ({ page, context }) => {
+    await context.clearCookies();
+    await page.goto(URL, { waitUntil: "networkidle" });
+    await page.locator("button[data-tab='ask']").click();
+
+    // Open modal, switch to OpenAI, save with a placeholder key+model, close.
+    await page.locator("#key-btn").click();
+    await page.locator("#provider-select").selectOption("openai");
+    // Modal should now show OpenAI labels and key prefix hint.
+    await expect(page.locator("#provider-key-label")).toContainText("OpenAI");
+    await expect(page.locator("#provider-key")).toHaveAttribute("placeholder", /^sk-/);
+    await page.fill("#provider-key", "sk-test-PLACEHOLDER-do-not-call");
+    await page.locator("#key-save").click();
+
+    // Provider chip on the pipeline panel should now reflect OpenAI.
+    await expect(page.locator("#provider-chip")).toContainText(/OpenAI/);
+
+    // Reopen modal — the OpenAI selection + key MUST persist (state preserved).
+    await page.locator("#key-btn").click();
+    await expect(page.locator("#provider-select")).toHaveValue("openai");
+    await expect(page.locator("#provider-key")).toHaveValue("sk-test-PLACEHOLDER-do-not-call");
+
+    // Switch to Gemini in the same modal — fields swap to the Gemini shape with no saved value.
+    await page.locator("#provider-select").selectOption("gemini");
+    await expect(page.locator("#provider-key-label")).toContainText("Gemini");
+    await expect(page.locator("#provider-key")).toHaveAttribute("placeholder", /^AIza/);
+    await expect(page.locator("#provider-key")).toHaveValue("");
+
+    // Switch back to OpenAI — original key returns (per-provider storage).
+    await page.locator("#provider-select").selectOption("openai");
+    await expect(page.locator("#provider-key")).toHaveValue("sk-test-PLACEHOLDER-do-not-call");
+  });
 });
 
 test.describe("Compare drawer", () => {

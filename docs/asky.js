@@ -2,25 +2,51 @@
  *
  * Pipeline (all client-side, all live):
  *   1. Pre-guard       (deterministic) — scope + prompt-injection strip
- *   2. Researcher      (Claude)        — extracts the relevant data slice + plan
- *   3. Analyst         (Claude)        — composes the answer using ONLY that slice
+ *   2. Researcher      (LLM)           — extracts the relevant data slice + plan
+ *   3. Analyst         (LLM)           — composes the answer using ONLY that slice
  *   4. Critic          (deterministic) — hallucination & citation guards
  *
- * Optional: LangSmith REST tracing if the user provides a key.
+ * Providers: Anthropic Claude · OpenAI · Google Gemini. User picks one in the modal.
+ * Optional: LangSmith REST tracing if the user provides a key (provider-agnostic).
  *
  * Hard rules:
  *   • No baked / canned answers — every response is a live LLM run on data.json.
- *   • API key stays in localStorage and is sent only to api.anthropic.com.
+ *   • Keys stay in localStorage and are sent only to the selected provider's API.
  *   • If validation fails, the answer is BLOCKED and we tell the user why.
  */
 
 (function () {
-  const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-  const ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"; // fast + cheap, sufficient for grounded extraction
   const LANGSMITH_URL = "https://api.smith.langchain.com/runs";
 
+  const PROVIDERS = {
+    anthropic: {
+      label: "Anthropic Claude",
+      keyPrefix: "sk-ant-",
+      keyLabel: "Anthropic API key",
+      defaultModel: "claude-haiku-4-5-20251001",
+      keyStorage: "askai.anthropic_key",
+      modelStorage: "askai.anthropic_model",
+    },
+    openai: {
+      label: "OpenAI",
+      keyPrefix: "sk-",
+      keyLabel: "OpenAI API key",
+      defaultModel: "gpt-4o-mini",
+      keyStorage: "askai.openai_key",
+      modelStorage: "askai.openai_model",
+    },
+    gemini: {
+      label: "Google Gemini",
+      keyPrefix: "AIza",
+      keyLabel: "Google Gemini API key",
+      defaultModel: "gemini-2.0-flash",
+      keyStorage: "askai.gemini_key",
+      modelStorage: "askai.gemini_model",
+    },
+  };
+
   const KS = {
-    anthropic: "askai.anthropic_key",
+    provider:  "askai.provider",
     langsmith: "askai.langsmith_key",
     project:   "askai.langsmith_project",
   };
@@ -28,17 +54,24 @@
   const state = {
     initialized: false,
     busy: false,
-    history: [],
   };
 
   function getKey(k) { return localStorage.getItem(k) || ""; }
   function setKey(k, v) { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); }
+  function activeProvider() {
+    const p = getKey(KS.provider);
+    return PROVIDERS[p] ? p : "anthropic";
+  }
+  function activeModel() {
+    const p = activeProvider();
+    return getKey(PROVIDERS[p].modelStorage) || PROVIDERS[p].defaultModel;
+  }
+  function activeProviderKey() {
+    return getKey(PROVIDERS[activeProvider()].keyStorage);
+  }
 
   // ---------- guards ----------
 
-  // Strip common prompt-injection patterns before we feed to the LLM.
-  // Pattern based on novabot's instruction-hierarchy approach: we never trust user text
-  // to redefine the system prompt. Block-list rather than transform aggressively.
   const INJECTION_PATTERNS = [
     /ignore (?:all |the )?(?:previous|prior|above)/i,
     /disregard (?:the )?(?:system|above|previous)/i,
@@ -55,7 +88,6 @@
     for (const p of INJECTION_PATTERNS) {
       if (p.test(q)) return { ok: false, reason: "This looks like a prompt-injection attempt. Ask a question about the dataset instead." };
     }
-    // Scope: must mention something dataset-relevant. We don't gate hard — we just nudge.
     const SCOPE = /\b(impact|engineer|posthog|review|pr|pull request|merged|incident|area|score|rank|composite|leverage|momentum|webjunkie|dmarticus|mattpua|haacked|andrewm|pauldambra|sampennington|methodology|signal|weight|surviving|centrality|graph)\b/i;
     if (!SCOPE.test(q)) {
       return { ok: false, reason: "I can only answer questions about engineers, impact, and the data on this page. Try one of the suggested questions on the right." };
@@ -63,8 +95,6 @@
     return { ok: true, sanitized: q };
   }
 
-  // The hallucination guard: every "@login" or **bold name** the answer mentions must
-  // exist in our roster. Otherwise we flag and block.
   function rosterFromState(STATE) {
     const set = new Set();
     if (STATE.core) {
@@ -84,30 +114,20 @@
   }
   function postGuard(answer, roster) {
     if (!answer || !answer.trim()) return { ok: false, reason: "Empty answer." };
-    // Capture candidate logins: @handle or **handle** with no spaces.
     const candidates = new Set();
     const pat = /(?:^|\s|[*`])@?([A-Za-z][A-Za-z0-9-]{1,38})\b/g;
     let m; while ((m = pat.exec(answer)) !== null) {
       const cand = m[1];
-      // GitHub logins are typically lowercase + 1-39 chars + alphanum/hyphen.
-      // Skip common English words and our framework terms.
       const lc = cand.toLowerCase();
       if (lc.length < 3) continue;
       if (COMMON_WORDS.has(lc)) continue;
-      // Heuristic: candidate must match GitHub-login shape AND appear with @, in code, or capitalised oddly.
-      if (cand.match(/^[A-Z][a-z]+$/)) continue; // probably an English word
+      if (cand.match(/^[A-Z][a-z]+$/)) continue;
       candidates.add(lc);
     }
     const unknown = [];
-    for (const c of candidates) {
-      if (!roster.has(c)) unknown.push(c);
-    }
+    for (const c of candidates) if (!roster.has(c)) unknown.push(c);
     if (unknown.length) {
       return { ok: false, reason: `Hallucination guard: the answer references unknown handles ${unknown.slice(0,5).map(x => "`" + x + "`").join(", ")} that aren't in the dataset roster.` };
-    }
-    if (!/\bcite|cit\b|see |based on |from data/i.test(answer) && !/`/.test(answer)) {
-      // Soft check — encourage citations but don't block.
-      // Real production: stricter. Here we let it through with a small note.
     }
     return { ok: true };
   }
@@ -116,16 +136,18 @@
     "the","and","for","with","this","that","from","they","their","have","has","are","was","were","but","not","you","your","our","what","which","who","whom","can","cannot","yes","no","over","under","most","more","less","than","also","than","very","each","every","across","into","onto","top","bottom","high","low","key","good","bad","total","summary","note","based","data","page","posthog","github","cli","api","ui","engineer","engineers","review","reviews","reviewer","author","authors","pr","prs","impact","leverage","incident","incidents","cross","area","areas","centrality","surviving","code","score","scores","rank","ranks","ranking","window","weeks","months","day","days","week","quarter","accelerating","cooling","steady","z","weight","weights","median","medians","percent","headline","why","because","therefore","while","whereas","including","both","one","two","three","four","five","six","seven","eight","nine","ten","mostly","mainly","largely","ones"
   ]);
 
-  // ---------- LangSmith tracing (REST, optional) ----------
+  // ---------- LangSmith tracing (REST, optional, provider-agnostic) ----------
 
-  async function lsCreateRun(parentRunId, name, inputs, runType="llm") {
+  async function lsCreateRun(parentRunId, name, inputs, runType="llm", extra={}) {
     const key = getKey(KS.langsmith);
     if (!key) return null;
     const id = crypto.randomUUID();
     const project = getKey(KS.project) || "posthog-impact-askai";
     const body = {
-      id, name, run_type: runType, project_name: project, inputs,
+      id, name, run_type: runType, project_name: project,
+      inputs: { ...inputs, ...extra },
       start_time: new Date().toISOString(), parent_run_id: parentRunId || undefined,
+      extra: { provider: activeProvider(), model: activeModel() },
     };
     try {
       await fetch(LANGSMITH_URL, {
@@ -152,39 +174,94 @@
     } catch (e) { /* non-fatal */ }
   }
 
-  // ---------- Anthropic call ----------
+  // ---------- provider dispatch ----------
 
-  async function claudeCall({ system, user, maxTokens=600 }) {
-    const key = getKey(KS.anthropic);
-    if (!key) throw new Error("Add an Anthropic API key in ⚙ Configure keys to ask live questions.");
-    const r = await fetch(ANTHROPIC_URL, {
+  async function llmCall({ system, user, maxTokens=600, expectsJson=false }) {
+    const provider = activeProvider();
+    const model = activeModel();
+    const apiKey = activeProviderKey();
+    if (!apiKey) {
+      throw new Error(`Add your ${PROVIDERS[provider].label} API key in ⚙ Configure keys to ask live questions.`);
+    }
+    if (provider === "anthropic") return anthropicCall({ apiKey, model, system, user, maxTokens });
+    if (provider === "openai")    return openaiCall({ apiKey, model, system, user, maxTokens, expectsJson });
+    if (provider === "gemini")    return geminiCall({ apiKey, model, system, user, maxTokens, expectsJson });
+    throw new Error(`Unknown provider: ${provider}`);
+  }
+
+  async function anthropicCall({ apiKey, model, system, user, maxTokens }) {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": key,
+        "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
         "anthropic-dangerous-direct-browser-access": "true",
       },
       body: JSON.stringify({
-        model: ANTHROPIC_MODEL,
-        max_tokens: maxTokens,
-        system,
+        model, max_tokens: maxTokens, system,
         messages: [{ role: "user", content: user }],
       }),
     });
     if (!r.ok) {
-      const errText = await r.text();
-      throw new Error(`Anthropic ${r.status}: ${errText.slice(0, 300)}`);
+      const t = await r.text();
+      throw new Error(`Anthropic ${r.status}: ${t.slice(0, 300)}`);
     }
     const j = await r.json();
-    const out = (j.content || []).map(c => c.text || "").join("");
-    return out;
+    return (j.content || []).map(c => c.text || "").join("");
+  }
+
+  async function openaiCall({ apiKey, model, system, user, maxTokens, expectsJson }) {
+    const body = {
+      model,
+      max_tokens: maxTokens,
+      messages: [
+        { role: "system", content: system },
+        { role: "user",   content: user },
+      ],
+    };
+    if (expectsJson) body.response_format = { type: "json_object" };
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(`OpenAI ${r.status}: ${t.slice(0, 300)}`);
+    }
+    const j = await r.json();
+    return j.choices?.[0]?.message?.content || "";
+  }
+
+  async function geminiCall({ apiKey, model, system, user, maxTokens, expectsJson }) {
+    const body = {
+      systemInstruction: { parts: [{ text: system }] },
+      contents: [{ role: "user", parts: [{ text: user }] }],
+      generationConfig: {
+        maxOutputTokens: maxTokens,
+        responseMimeType: expectsJson ? "application/json" : "text/plain",
+      },
+    };
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      // Gemini errors arrive as { error: { code, message, status } } — unwrap for clarity.
+      let pretty = t.slice(0, 300);
+      try { const e = JSON.parse(t); if (e?.error?.message) pretty = e.error.message; } catch (_) {}
+      throw new Error(`Gemini ${r.status}: ${pretty}`);
+    }
+    const j = await r.json();
+    return (j.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("");
   }
 
   // ---------- pipeline ----------
 
-  // We give the Researcher a compact summary of the dataset (no PII, just metric vectors)
-  // and ask it to return strict JSON with the slice it would use.
   function compactRoster(STATE) {
     const top = (STATE.full && STATE.full.engineers) || (STATE.core.top5 || []);
     return top.slice(0, 50).map(e => ({
@@ -211,8 +288,8 @@ Your job: select the SPECIFIC subset of records and fields that the Analyst will
 Output schema (STRICT, no prose):
 {
   "intent": "<one short sentence describing what the user is asking>",
-  "selected_logins": ["<login>", ...],   // up to 10
-  "fields_needed": ["score", "pr_count", ...],  // any of the metric fields
+  "selected_logins": ["<login>", ...],
+  "fields_needed": ["score", "pr_count", ...],
   "extra_notes": "<one sentence flagging caveats or computations the analyst should do>"
 }
 
@@ -255,6 +332,16 @@ The score is min-max normalized to 0–100 for display.`;
           <span data-note class="text-slate-500"></span>
         </li>`).join("")}
     `;
+    refreshProviderChip();
+  }
+
+  function refreshProviderChip() {
+    const chip = document.getElementById("provider-chip");
+    if (!chip) return;
+    const p = activeProvider();
+    const hasKey = !!activeProviderKey();
+    chip.textContent = hasKey ? `via ${PROVIDERS[p].label} · ${activeModel()}` : `via ${PROVIDERS[p].label} · key not set`;
+    chip.className = `text-[10px] pill ${hasKey ? "text-slate-500" : "text-amber-600"}`;
   }
 
   function pushBubble(role, html) {
@@ -268,8 +355,6 @@ The score is min-max normalized to 0–100 for display.`;
     chat.scrollTop = chat.scrollHeight;
   }
 
-  // Minimal markdown → safe HTML. We rely on the post-guard to keep handles real;
-  // we also never inject raw user/LLM text without sanitizing angle brackets.
   function safeMd(s) {
     return s
       .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
@@ -287,11 +372,10 @@ The score is min-max normalized to 0–100 for display.`;
     state.busy = true;
     initPipeline();
 
-    // Render user bubble
     pushBubble("user", safeMd(question));
     const placeholder = document.createElement("div");
     placeholder.className = "text-xs text-slate-500 italic";
-    placeholder.textContent = "Asky AI is thinking…";
+    placeholder.textContent = `Ask AI is thinking — running ${PROVIDERS[activeProvider()].label}…`;
     document.getElementById("chat").appendChild(placeholder);
 
     const traceRoot = await lsCreateRun(null, "askai.pipeline", { question }, "chain");
@@ -316,8 +400,7 @@ The score is min-max normalized to 0–100 for display.`;
       const rRun = await lsCreateRun(traceRoot, "researcher", { question: pg.sanitized, slice_size: slice.length });
       let researcherJson;
       try {
-        const raw = await claudeCall({ system: RESEARCHER_SYSTEM, user: researcherUser, maxTokens: 400 });
-        // Strict JSON extraction
+        const raw = await llmCall({ system: RESEARCHER_SYSTEM, user: researcherUser, maxTokens: 400, expectsJson: true });
         const match = raw.match(/\{[\s\S]*\}/);
         researcherJson = match ? JSON.parse(match[0]) : null;
         if (!researcherJson || !Array.isArray(researcherJson.selected_logins)) throw new Error("Researcher returned invalid JSON.");
@@ -329,7 +412,7 @@ The score is min-max normalized to 0–100 for display.`;
       }
       setStep(1, "ok", `${researcherJson.selected_logins.length} logins · ${researcherJson.fields_needed?.length ?? 0} fields`);
 
-      // 3) Analyst — receives ONLY the selected slice, not the full dataset
+      // 3) Analyst
       setStep(2, "active");
       const selectedSet = new Set(researcherJson.selected_logins.map(s => s.toLowerCase()));
       const filteredSlice = slice.filter(e => selectedSet.has(e.login.toLowerCase()));
@@ -344,7 +427,7 @@ Researcher notes: ${researcherJson.extra_notes || "—"}
 Selected slice (use ONLY these records):
 ${JSON.stringify(filteredSlice, null, 0)}`;
       const aRun = await lsCreateRun(traceRoot, "analyst", { question: pg.sanitized, slice_size: filteredSlice.length });
-      const answer = await claudeCall({ system: ANALYST_SYSTEM, user: analystUser, maxTokens: 600 });
+      const answer = await llmCall({ system: ANALYST_SYSTEM, user: analystUser, maxTokens: 600 });
       await lsEndRun(aRun, { answer_chars: answer.length });
       setStep(2, "ok", `${answer.split(/\s+/).length} words`);
 
@@ -375,8 +458,22 @@ ${JSON.stringify(filteredSlice, null, 0)}`;
 
   // ---------- key modal ----------
 
+  function syncModalToProvider() {
+    const sel = document.getElementById("provider-select");
+    const provider = sel.value;
+    const cfg = PROVIDERS[provider];
+    document.getElementById("provider-key-label").textContent = cfg.keyLabel;
+    const keyInput = document.getElementById("provider-key");
+    keyInput.placeholder = cfg.keyPrefix + "...";
+    keyInput.value = getKey(cfg.keyStorage);
+    const modelInput = document.getElementById("provider-model");
+    modelInput.placeholder = cfg.defaultModel;
+    modelInput.value = getKey(cfg.modelStorage);
+  }
+
   function openKeyModal() {
-    document.getElementById("anthropic-key").value = getKey(KS.anthropic);
+    document.getElementById("provider-select").value = activeProvider();
+    syncModalToProvider();
     document.getElementById("langsmith-key").value = getKey(KS.langsmith);
     document.getElementById("langsmith-project").value = getKey(KS.project) || "posthog-impact-askai";
     const modal = document.getElementById("key-modal");
@@ -386,8 +483,6 @@ ${JSON.stringify(filteredSlice, null, 0)}`;
     const modal = document.getElementById("key-modal");
     modal.classList.add("hidden"); modal.classList.remove("flex");
   }
-
-  // ---------- public init ----------
 
   function init(STATE) {
     if (state.initialized) return;
@@ -404,19 +499,27 @@ ${JSON.stringify(filteredSlice, null, 0)}`;
       document.getElementById("chat-input").focus();
     }));
 
-    // Key modal wiring
+    // Modal wiring
     document.getElementById("key-btn").addEventListener("click", openKeyModal);
     document.getElementById("key-cancel").addEventListener("click", closeKeyModal);
+    document.getElementById("provider-select").addEventListener("change", syncModalToProvider);
     document.getElementById("key-clear").addEventListener("click", () => {
-      setKey(KS.anthropic, ""); setKey(KS.langsmith, ""); setKey(KS.project, "");
-      document.getElementById("anthropic-key").value = "";
-      document.getElementById("langsmith-key").value = "";
-      document.getElementById("langsmith-project").value = "";
+      // Clear ONLY the active provider's key + model. LangSmith stays.
+      const provider = document.getElementById("provider-select").value;
+      const cfg = PROVIDERS[provider];
+      setKey(cfg.keyStorage, "");
+      setKey(cfg.modelStorage, "");
+      syncModalToProvider();
     });
     document.getElementById("key-save").addEventListener("click", () => {
-      setKey(KS.anthropic, document.getElementById("anthropic-key").value.trim());
+      const provider = document.getElementById("provider-select").value;
+      const cfg = PROVIDERS[provider];
+      setKey(KS.provider, provider);
+      setKey(cfg.keyStorage, document.getElementById("provider-key").value.trim());
+      setKey(cfg.modelStorage, document.getElementById("provider-model").value.trim());
       setKey(KS.langsmith, document.getElementById("langsmith-key").value.trim());
       setKey(KS.project, document.getElementById("langsmith-project").value.trim());
+      refreshProviderChip();
       closeKeyModal();
     });
 
@@ -432,7 +535,10 @@ ${JSON.stringify(filteredSlice, null, 0)}`;
 
     // Welcome message — no canned answer, just orientation.
     if (!document.getElementById("chat").children.length) {
-      pushBubble("assistant", "Hi — I'm Ask AI. I run a 4-step pipeline (Pre-guard → Researcher → Analyst → Critic) over the live data on this page. Add an Anthropic API key under <code>⚙ Configure keys</code>, then click any suggested question on the right or type your own. Every answer references only engineers and numbers that exist in the dataset.");
+      pushBubble(
+        "assistant",
+        "Hi — I'm Ask AI. I run a 4-step pipeline (Pre-guard → Researcher → Analyst → Critic) over the live data on this page. Pick a provider (Anthropic / OpenAI / Gemini) and add your key under <code>⚙ Configure keys</code>, then click any suggested question on the right or type your own. Every answer references only engineers and numbers that exist in the dataset."
+      );
     }
   }
 

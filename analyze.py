@@ -230,9 +230,15 @@ def main():
         z = zscore(momentum_pool, momentum_raw[a])
         momentum[a] = {"z": round(z, 3), "raw": round(momentum_raw[a], 3), "label": _label(z), "recent_prs": pr_count_recent.get(a, 0)}
 
-    # Peer medians for "Nx the median" phrasing
+    # Peer reference for "Nx the team" phrasing.
+    # We use the median of the *non-zero* eligible engineers — for sparse signals like
+    # incident_work, the population median is 0 which makes the ratio meaningless.
     SIGNAL_KEYS = ["surviving_code","review_leverage","cross_area","incident_work","review_centrality"]
-    medians = {k: statistics.median([m[k] for m in metrics.values()]) or 1e-9 for k in SIGNAL_KEYS}
+    def _ref(k):
+        vals = [m[k] for m in metrics.values() if m[k] > 0]
+        if len(vals) < 5: return None  # too sparse to summarize
+        return statistics.median(vals)
+    medians = {k: _ref(k) for k in SIGNAL_KEYS}
 
     def headline(a, m):
         bits = []
@@ -258,13 +264,16 @@ def main():
         return labels.get(primary, "delivers consistent merged work")
 
     def peer_phrase(m, primary):
-        """e.g. '3.2× the median for incident work' — concrete, defensible peer comparison."""
+        """e.g. '3.2× the typical contributor on incident work'.
+        Uses the median of *non-zero* engineers as the reference, because population
+        medians for sparse signals (incident_work) are 0 and produce nonsense ratios."""
         if not primary: return None
         med = medians.get(primary)
         v = m.get(primary, 0)
-        if med <= 0 or v <= 0: return None
+        if med is None or med <= 0 or v <= 0: return None
         ratio = v / med
         if ratio < 1.5: return None
+        if ratio > 20: ratio = 20  # cap absurd outliers in the headline
         nice = {
             "surviving_code": "lines shipped (capped)",
             "review_leverage": "deep approving reviews",
@@ -272,7 +281,7 @@ def main():
             "incident_work": "incident-labeled fixes",
             "review_centrality": "review-graph centrality",
         }[primary]
-        return f"{ratio:.1f}× the team median for {nice}"
+        return f"{ratio:.1f}× the typical contributor's {nice}"
 
     def signature_pr(top_prs_for_a, b):
         """Pick the single PR that best illustrates the engineer's dominant signal."""

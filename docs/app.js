@@ -71,9 +71,11 @@ function momentumChip(mom) {
 // ---------- header ----------
 
 function renderHeader() {
-  const since = new Date(STATE.core.window_since);
+  // Use the analyzer's stamped time when available; fall back to page-load now.
+  const stamp = STATE.core.generated_at ? new Date(STATE.core.generated_at) : new Date();
+  const updated = stamp.toISOString().replace("T", " ").slice(0, 16) + " UTC";
   document.getElementById("meta-line").textContent =
-    `${STATE.core.n_prs.toLocaleString()} merged PRs · ${STATE.core.n_eligible} eligible engineers · since ${since.toISOString().slice(0,10)}`;
+    `${STATE.core.n_prs.toLocaleString()} merged PRs · ${STATE.core.n_eligible} eligible engineers · Updated at ${updated}`;
 }
 
 // ---------- Brief tab ----------
@@ -252,7 +254,19 @@ function renderGraph(d3) {
   const container = document.getElementById("graph");
   container.innerHTML = "";
   const W = container.clientWidth || 320;
-  const H = container.clientHeight || 220;
+  const H = container.clientHeight || 320;
+
+  // Render the legend OUTSIDE the SVG so it can never collide with nodes.
+  const legendEl = document.getElementById("graph-legend");
+  if (legendEl) {
+    const legendItems = [
+      ["surviving_code","code"], ["review_leverage","review"], ["cross_area","breadth"],
+      ["incident_work","incidents"], ["review_centrality","central"]
+    ];
+    legendEl.innerHTML = legendItems.map(([k, label]) =>
+      `<span class="inline-flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full" style="background:${COLORS[k]}"></span>${label}</span>`
+    ).join("");
+  }
 
   const nodes = STATE.core.graph.nodes.map(n => ({ ...n }));
   const links = STATE.core.graph.edges.map(e => ({ source: e.source, target: e.target, weight: e.weight }));
@@ -261,9 +275,9 @@ function renderGraph(d3) {
 
   const svg = d3.select(container).append("svg")
     .attr("viewBox", [0, 0, W, H])
-    .attr("width", "100%").attr("height", "100%");
+    .attr("width", "100%").attr("height", "100%")
+    .style("display", "block");
 
-  // One arrowhead per signal color so the marker matches its edge target.
   const defs = svg.append("defs");
   defs.append("marker")
     .attr("id", "arrow").attr("viewBox", "0 -5 10 10").attr("refX", 14).attr("refY", 0)
@@ -277,7 +291,6 @@ function renderGraph(d3) {
     .attr("marker-end", "url(#arrow)");
   link.append("title").text(d => `${d.source} → ${d.target} · ${d.weight} reviews`);
 
-  // Edge weight labels (small)
   const linkLabel = svg.append("g").attr("class", "linkLabels")
     .selectAll("text").data(links).join("text")
     .attr("font-size", 9).attr("fill", "#64748b")
@@ -285,7 +298,9 @@ function renderGraph(d3) {
     .attr("stroke", "white").attr("stroke-width", 3)
     .attr("dy", -3).text(d => d.weight);
 
-  const radius = d => 8 + Math.sqrt((d.centrality || 0) * 10000);
+  // Larger nodes, but clamped so PageRank outliers can't fill the canvas.
+  const RADIUS_MIN = 14, RADIUS_MAX = 32;
+  const radius = d => Math.max(RADIUS_MIN, Math.min(RADIUS_MAX, 12 + Math.sqrt((d.centrality || 0) * 18000)));
   const colorFor = d => COLORS[d.primary_signal] || "#0ea5e9";
 
   const node = svg.append("g").attr("class", "nodes").selectAll("g").data(nodes).join("g")
@@ -298,15 +313,14 @@ function renderGraph(d3) {
     .attr("r", radius)
     .attr("fill", colorFor)
     .attr("fill-opacity", 0.85)
-    .attr("stroke", "white").attr("stroke-width", 2);
+    .attr("stroke", "white").attr("stroke-width", 2.5);
   node.append("title").text(d => `${d.id} · #${d.rank} impact · ${d.pr_count} PRs · PageRank ${d.centrality.toFixed(3)}\nDominant signal: ${(d.primary_signal||"—").replace("_"," ")}`);
   node.append("text").text(d => d.id)
-    .attr("font-size", 10).attr("fill", "#0f172a").attr("text-anchor", "middle")
+    .attr("font-size", 11).attr("fill", "#0f172a").attr("text-anchor", "middle")
     .attr("font-weight", 600)
     .attr("dy", d => -radius(d) - 6)
     .attr("paint-order", "stroke").attr("stroke", "white").attr("stroke-width", 3);
 
-  // Click-to-highlight neighborhood
   let focused = null;
   const setFocus = (id) => {
     focused = id;
@@ -324,24 +338,22 @@ function renderGraph(d3) {
   node.on("click", (ev, d) => { setFocus(focused === d.id ? null : d.id); ev.stopPropagation(); });
   svg.on("click", () => setFocus(null));
 
-  // Legend (small, sits at the top-left in SVG units)
-  const legendItems = [
-    ["surviving_code","code"], ["review_leverage","review"], ["cross_area","breadth"],
-    ["incident_work","incidents"], ["review_centrality","central"]
-  ];
-  const lg = svg.append("g").attr("transform", `translate(6,6)`).attr("font-size", 9).attr("fill", "#475569");
-  legendItems.forEach(([k, label], i) => {
-    const g = lg.append("g").attr("transform", `translate(${i*64}, 0)`);
-    g.append("circle").attr("r", 4).attr("cy", 4).attr("fill", COLORS[k]);
-    g.append("text").attr("x", 9).attr("y", 7).text(label);
-  });
+  // Padding so the label above each node never clips the top of the SVG.
+  const PAD_TOP = 22, PAD_SIDE = 14, PAD_BOT = 14;
+  const clamp = (d) => {
+    const r = radius(d);
+    d.x = Math.max(PAD_SIDE + r, Math.min(W - PAD_SIDE - r, d.x));
+    d.y = Math.max(PAD_TOP + r, Math.min(H - PAD_BOT - r, d.y));
+  };
 
   const sim = d3.forceSimulation(nodes)
-    .force("link", d3.forceLink(links).id(d => d.id).distance(80).strength(0.5))
-    .force("charge", d3.forceManyBody().strength(-220))
-    .force("center", d3.forceCenter(W / 2, H / 2 + 6))
-    .force("collide", d3.forceCollide().radius(d => radius(d) + 8))
+    .force("link", d3.forceLink(links).id(d => d.id).distance(110).strength(0.45))
+    .force("charge", d3.forceManyBody().strength(-380))
+    .force("centerX", d3.forceX(W / 2).strength(0.06))
+    .force("centerY", d3.forceY(H / 2).strength(0.06))
+    .force("collide", d3.forceCollide().radius(d => radius(d) + 18))
     .on("tick", () => {
+      nodes.forEach(clamp);
       link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
           .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
       linkLabel.attr("x", d => (d.source.x + d.target.x) / 2)

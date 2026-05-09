@@ -420,6 +420,7 @@ def main():
 
     core = {
         "window_since": raw["window_since"],
+        "generated_at": NOW.isoformat(),
         "n_prs": len(prs),
         "n_eligible": len(eligible),
         "weights": WEIGHTS,

@@ -34,7 +34,28 @@
 <header class="border-b border-slate-200 bg-white sticky top-0 z-30">
   <div class="max-w-[1440px] mx-auto px-6 py-3 flex items-center justify-between">
     <div class="flex items-center gap-3">
-      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-500 grid place-items-center text-white font-bold">P</div>
+      <svg width="36" height="36" viewBox="0 0 36 36" aria-label="Engineering Impact" class="shrink-0">
+        <defs>
+          <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#0ea5e9"/>
+            <stop offset="100%" stop-color="#6366f1"/>
+          </linearGradient>
+        </defs>
+        <rect width="36" height="36" rx="9" fill="url(#lg)"/>
+        <g stroke="white" stroke-width="1.4" stroke-opacity="0.9" fill="none">
+          <line x1="11" y1="11" x2="22" y2="9"/>
+          <line x1="11" y1="11" x2="14" y2="22"/>
+          <line x1="22" y1="9" x2="26" y2="20"/>
+          <line x1="14" y1="22" x2="26" y2="20"/>
+          <line x1="22" y1="9" x2="14" y2="22"/>
+        </g>
+        <g fill="white">
+          <circle cx="11" cy="11" r="2.6"/>
+          <circle cx="22" cy="9"  r="2.2"/>
+          <circle cx="26" cy="20" r="2.2"/>
+          <circle cx="14" cy="22" r="3"/>
+        </g>
+      </svg>
       <div>
         <div class="font-semibold leading-tight">PostHog · Engineering Impact</div>
         <div class="text-[11px] text-slate-500" id="meta-line"></div>
@@ -106,8 +127,9 @@
 
         <div class="bg-white border border-slate-200 rounded-xl p-4">
           <h3 class="text-sm font-semibold mb-1">Top-5 review network</h3>
-          <p class="text-[11px] text-slate-500 mb-1">Edge = reviewer → author. Node size = PageRank.</p>
-          <div id="graph" style="height:200px"></div>
+          <p class="text-[11px] text-slate-500">Edge = reviewer → author. Node size = PageRank. Click a node to highlight its neighborhood.</p>
+          <div id="graph-legend" class="flex items-center gap-3 flex-wrap text-[10px] text-slate-500 mt-1.5 mb-1"></div>
+          <div id="graph" style="height:320px"></div>
         </div>
       </aside>
     </div>
@@ -272,13 +294,6 @@
         <li>Review centrality is sensitive to who reviews whom; a tight clique can reinforce each other.</li>
         <li>Window is 90 days — engineers on parental leave / sabbatical / cross-org work are not visible here.</li>
       </ul>
-
-      <h3 class="font-semibold text-sm mt-4">Reproduce</h3>
-      <pre class="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs leading-relaxed overflow-auto"><code>git clone https://github.com/Rimcode-ai/posthog-impact-dashboard
-export GITHUB_TOKEN=ghp_...
-python3 fetch.py            # ~90s, writes raw.json
-python3 analyze.py          # writes docs/data.json
-open docs/index.html</code></pre>
     </div>
   </section>
 

@@ -18,6 +18,9 @@
  * Hard rules:
  *   • No baked / canned answers — every response is a live LLM run on data.json.
  *   • Keys stay in localStorage and are sent only to the selected provider's API.
+ *   • If validation fails, the answer is BLOCKED and we tell the user why,
+ *     and we suggest a precise rephrased question — built from real handles
+ *     and dataset fields — that we know can be answered from the live data.
  */
 
 (function () {
@@ -110,6 +113,48 @@
   // prompts forbid inventing handles. We deliberately do not run a post-hoc regex
   // check on the answer — those false-positive on English words like "touched" or
   // "shipped", which the Analyst legitimately uses without referring to a person.
+
+  // ---------- rephrase suggestion (used after a validation block) ----------
+  //
+  // When pre-guard or pipeline validation blocks a question, we don't just shrug —
+  // we point the user at a precise question that we KNOW can be answered from the
+  // live dataset, with real handles baked in (never invented). The intent: high
+  // accuracy (every suggestion maps to data fields that exist) and high precision
+  // (the suggestion is specific, not "ask something about engineers").
+  function suggestRephrase(question, STATE) {
+    const q = (question || "").toLowerCase();
+    const core = STATE.core || {};
+    const top5 = core.top5 || [];
+    const swap = (core.by_pr_count || []).find(x => (x.delta || 0) > 1);
+    const topName = top5[0]?.login;
+    const accel = (core.movers?.accelerating || [])[0]?.login;
+
+    if (/\b(top|best|most|leader(?:s)?\b|impact|driver|standout)/i.test(q)) {
+      return "Who are the top 5 most impactful engineers and what makes each one impactful?";
+    }
+    if (/\b(why|rank(?:s|ing)?|expected|surpris)/i.test(q) && swap) {
+      return `Why does ${swap.login} rank lower than expected given his PR volume?`;
+    }
+    if (/\b(incident|bug|on.?call|hotfix|outage|fire|p[01]\b|sev)/i.test(q)) {
+      return "Who carries the on-call / incident-response load?";
+    }
+    if (/\b(area|owner|product|domain|team|risk|concentrat|bus.?factor)/i.test(q)) {
+      return "Who leads each product area, and is any area concentrated enough to be a risk?";
+    }
+    if (/\b(review)/i.test(q)) {
+      return "Who reviews substantially more than they ship?";
+    }
+    if (/\b(momentum|accelerat|cool(?:ing)?|trend|recent|velocity|cadence|lately|this week)/i.test(q)) {
+      return "Which engineers are accelerating in the last 7 days vs cooling off?";
+    }
+    // If the user mentioned a specific engineer that exists, suggest a deep-dive on them.
+    const mentioned = (top5.map(e => e.login) || []).find(l => q.includes(l.toLowerCase()));
+    if (mentioned) return `Tell me more about ${mentioned} and what they shipped.`;
+    // Default: deep-dive on the current #1.
+    if (topName) return `Tell me more about ${topName} and what they shipped.`;
+    if (accel)   return `Why is ${accel} accelerating in the last 7 days?`;
+    return null;
+  }
 
   // ---------- LangSmith tracing (REST, optional, provider-agnostic) ----------
 
@@ -362,8 +407,10 @@ The score is min-max normalized to 0–100 for display.`;
       if (!pg.ok) {
         setStep(0, "block", pg.reason);
         placeholder.remove();
-        pushBubble("system", `**Blocked by pre-guard.** ${safeMd(pg.reason)}`);
-        await lsEndRun(traceRoot, { blocked: pg.reason });
+        const suggestion = suggestRephrase(question, STATE);
+        const tail = suggestion ? `\n\n**Try this instead — it's answerable from the live data:**\n"${suggestion}"` : "";
+        pushBubble("system", `**Blocked by pre-guard.** ${safeMd(pg.reason)}${safeMd(tail)}`);
+        await lsEndRun(traceRoot, { blocked: pg.reason, suggestion });
         return;
       }
       setStep(0, "ok", "scope + injection ok");
@@ -407,8 +454,10 @@ ${JSON.stringify(filteredSlice, null, 0)}`;
       if (!answer || !answer.trim()) {
         setStep(2, "block", "empty answer from model");
         placeholder.remove();
-        pushBubble("system", "**Empty answer from the model.** Try rephrasing the question.");
-        await lsEndRun(traceRoot, { blocked: "empty answer" });
+        const suggestion = suggestRephrase(question, STATE);
+        const tail = suggestion ? `\n\n**Try this instead — it's answerable from the live data:**\n"${suggestion}"` : "";
+        pushBubble("system", `**Empty answer from the model.**${safeMd(tail)}`);
+        await lsEndRun(traceRoot, { blocked: "empty answer", suggestion });
         return;
       }
       setStep(2, "ok", `${answer.split(/\s+/).length} words`);
@@ -418,7 +467,9 @@ ${JSON.stringify(filteredSlice, null, 0)}`;
       await lsEndRun(traceRoot, { answer });
     } catch (e) {
       placeholder.remove();
-      pushBubble("system", `**Error.** ${safeMd(e.message || String(e))}`);
+      const suggestion = suggestRephrase(question, STATE);
+      const tail = suggestion ? `\n\n**Try this instead — it's answerable from the live data:**\n"${suggestion}"` : "";
+      pushBubble("system", `**Error.** ${safeMd(e.message || String(e))}${safeMd(tail)}`);
       await lsEndRun(traceRoot, null, String(e));
     } finally {
       state.busy = false;

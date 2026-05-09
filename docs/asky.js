@@ -88,7 +88,12 @@
     for (const p of INJECTION_PATTERNS) {
       if (p.test(q)) return { ok: false, reason: "This looks like a prompt-injection attempt. Ask a question about the dataset instead." };
     }
-    const SCOPE = /\b(impact|engineer|posthog|review|pr|pull request|merged|incident|area|score|rank|composite|leverage|momentum|webjunkie|dmarticus|mattpua|haacked|andrewm|pauldambra|sampennington|methodology|signal|weight|surviving|centrality|graph)\b/i;
+    // Prefix-match: \w* after the alternation lets "impact" cover "impactful/impacts",
+    // "engineer" cover "engineers/engineering", "review" cover "reviews/reviewer/reviewing",
+    // "ship" cover "shipped/shipping", etc. Without this the seed question
+    // "Who are the top 5 most impactful engineers..." was being blocked because
+    // \bimpact\b doesn't match the word "impactful".
+    const SCOPE = /\b(impact|engineer|posthog|review|merged|merge|incident|area|score|rank|composite|leverage|momentum|methodology|signal|weight|weighted|surviving|survives|centrality|graph|ship|author|authored|fix|fixes|hotfix|regression|outage|carries|on-call|oncall|accelerat|cool(?:ing|ed)?|metric|formula|webjunkie|dmarticus|mattpua|haacked|andrewm|pauldambra|sampennington|rafaeelaudibert|jonmcwest|skoob13|mattbro|dmarchuk|pull\s+request|pull\s+requests)\w*/i;
     if (!SCOPE.test(q)) {
       return { ok: false, reason: "I can only answer questions about engineers, impact, and the data on this page. Try one of the suggested questions on the right." };
     }

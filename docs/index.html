@@ -3,221 +3,272 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=1440">
-<title>PostHog · Engineering Impact (last 90 days)</title>
+<title>PostHog · Engineering Impact</title>
+<link rel="preload" as="fetch" href="data.json" crossorigin>
+<link rel="dns-prefetch" href="//cdn.tailwindcss.com">
+<link rel="dns-prefetch" href="//cdn.jsdelivr.net">
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
-  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  .card { transition: transform .15s ease, box-shadow .15s ease; }
-  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 28px -10px rgba(0,0,0,.18); }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Roboto", "Helvetica Neue", Arial, sans-serif; }
   .seg { height: 14px; }
   .seg:first-child { border-top-left-radius: 999px; border-bottom-left-radius: 999px; }
   .seg:last-child { border-top-right-radius: 999px; border-bottom-right-radius: 999px; }
   details > summary { cursor: pointer; list-style: none; }
   details > summary::-webkit-details-marker { display: none; }
   .pill { font-variant-numeric: tabular-nums; }
+  .tab-active { background: white; color: #0f172a; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .step-pending { background: #f1f5f9; color: #94a3b8; }
+  .step-active { background: #dbeafe; color: #1d4ed8; }
+  .step-ok { background: #dcfce7; color: #166534; }
+  .step-block { background: #fee2e2; color: #b91c1c; }
+  .grad-card { background: linear-gradient(180deg, rgba(255,255,255,1) 0%, rgba(248,250,252,1) 100%); }
+  .md p { margin: .35em 0; }
+  .md ul { margin: .25em 0 .25em 1.25em; list-style: disc; }
+  .md ol { margin: .25em 0 .25em 1.5em; list-style: decimal; }
+  .md code { background: #f1f5f9; padding: 1px 4px; border-radius: 4px; font-size: 92%; }
+  .md strong { color: #0f172a; }
 </style>
 </head>
-<body class="bg-slate-50 text-slate-900">
-<main class="max-w-[1440px] mx-auto px-6 py-5">
+<body class="bg-slate-50 text-slate-900 min-h-screen">
 
-  <header class="flex items-baseline justify-between gap-4 mb-3">
-    <div>
-      <h1 class="text-2xl font-bold tracking-tight">PostHog · Most impactful engineers <span class="text-slate-400 font-normal">— last 90 days</span></h1>
-      <p class="text-sm text-slate-600 mt-1">Impact = transparent composite of <b>5 signals</b>: surviving code, substantive review leverage, cross-area reach, incident-fix authorship, and review-graph centrality. Every number on this page traces to a formula in the methodology box. <a class="text-blue-600 underline" href="https://github.com/PostHog/posthog" target="_blank">Source repo →</a></p>
-    </div>
-    <div class="text-right text-xs text-slate-500 shrink-0">
-      <div id="meta-window"></div>
-      <div id="meta-counts"></div>
-      <div>Generated <span id="meta-stamp"></span></div>
-    </div>
-  </header>
-
-  <section class="grid grid-cols-12 gap-5">
-
-    <!-- LEFT: top 5 cards -->
-    <div class="col-span-8">
-      <div class="flex items-center justify-between mb-2">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Top 5 by impact</h2>
-        <div class="text-[11px] text-slate-500 flex items-center gap-3 flex-wrap">
-          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#0ea5e9"></span>Surviving code 25%</span>
-          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#22c55e"></span>Review leverage 25%</span>
-          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#a855f7"></span>Cross-area 15%</span>
-          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#f97316"></span>Incident work 20%</span>
-          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#eab308"></span>Centrality 15%</span>
-        </div>
+<header class="border-b border-slate-200 bg-white sticky top-0 z-30">
+  <div class="max-w-[1440px] mx-auto px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-500 grid place-items-center text-white font-bold">P</div>
+      <div>
+        <div class="font-semibold leading-tight">PostHog · Engineering Impact</div>
+        <div class="text-[11px] text-slate-500" id="meta-line"></div>
       </div>
-      <div id="cards" class="grid grid-cols-1 gap-3"></div>
+    </div>
+    <nav class="flex items-center gap-1 bg-slate-100 rounded-xl p-1 text-sm" id="tabs">
+      <button data-tab="brief" class="px-4 py-1.5 rounded-lg tab-active font-medium">Leadership Brief</button>
+      <button data-tab="explore" class="px-4 py-1.5 rounded-lg text-slate-600 hover:text-slate-900">Explore</button>
+      <button data-tab="ask" class="px-4 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 flex items-center gap-1.5">
+        <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>Ask AI
+      </button>
+      <button data-tab="method" class="px-4 py-1.5 rounded-lg text-slate-600 hover:text-slate-900">Methodology</button>
+    </nav>
+    <div class="text-right text-[11px] text-slate-500">
+      <a class="hover:underline" href="https://github.com/PostHog/posthog" target="_blank">github.com/PostHog/posthog</a><br>
+      <a class="hover:underline" href="https://github.com/Rimcode-ai/posthog-impact-dashboard" target="_blank">view source</a>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-[1440px] mx-auto px-6 py-6">
+
+  <!-- ===================== LEADERSHIP BRIEF ===================== -->
+  <section id="tab-brief" class="space-y-6">
+    <div class="grid grid-cols-12 gap-5">
+      <div class="col-span-8 grad-card border border-slate-200 rounded-2xl p-5">
+        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">Executive summary</div>
+        <h1 class="text-xl font-semibold text-slate-900 mb-3">The most impactful PostHog engineers, last 90 days</h1>
+        <ul id="exec-brief" class="space-y-1.5 text-[14px] text-slate-700 md"></ul>
+      </div>
+      <div class="col-span-4 grid grid-cols-2 gap-3">
+        <div class="bg-white border border-slate-200 rounded-xl p-3"><div class="text-[11px] text-slate-500 uppercase">Merged PRs</div><div id="kpi-prs" class="text-2xl font-semibold pill mt-1"></div><div class="text-[11px] text-slate-500">in 90-day window</div></div>
+        <div class="bg-white border border-slate-200 rounded-xl p-3"><div class="text-[11px] text-slate-500 uppercase">Engineers ranked</div><div id="kpi-eng" class="text-2xl font-semibold pill mt-1"></div><div class="text-[11px] text-slate-500">≥3 merged PRs</div></div>
+        <div class="bg-white border border-slate-200 rounded-xl p-3"><div class="text-[11px] text-slate-500 uppercase">Signals combined</div><div class="text-2xl font-semibold pill mt-1">5</div><div class="text-[11px] text-slate-500">z-scored, weighted</div></div>
+        <div class="bg-white border border-slate-200 rounded-xl p-3"><div class="text-[11px] text-slate-500 uppercase">Top score</div><div id="kpi-top" class="text-2xl font-semibold pill mt-1"></div><div class="text-[11px] text-slate-500">/100 composite</div></div>
+      </div>
     </div>
 
-    <!-- RIGHT: comparison + methodology + graph -->
-    <aside class="col-span-4 flex flex-col gap-4">
-      <div class="bg-white rounded-xl border border-slate-200 p-4">
-        <h3 class="text-sm font-semibold mb-2">Why not just count PRs?</h3>
-        <p class="text-xs text-slate-600 mb-2">Ranking by raw PR count finds high <i>output</i> but misses high <i>leverage</i>. Below: the 5 highest-PR engineers and where each lands on the impact ranking.</p>
-        <table class="w-full text-xs"><thead><tr class="text-slate-500 text-left"><th class="py-1">Engineer</th><th class="py-1 text-right">PRs</th><th class="py-1 text-right">Impact rank</th></tr></thead><tbody id="comparison-table"></tbody></table>
-      </div>
-
-      <div class="bg-white rounded-xl border border-slate-200 p-4">
-        <h3 class="text-sm font-semibold mb-1">Top-5 review graph</h3>
-        <p class="text-[11px] text-slate-500 mb-1">Edge = reviewer → PR author. Node size = PageRank. Hover for counts.</p>
-        <div id="graph" style="height:220px"></div>
-      </div>
-
-      <details class="bg-white rounded-xl border border-slate-200 p-4 text-xs" open>
-        <summary class="font-semibold text-sm flex justify-between items-center">Methodology <span class="text-slate-400 text-[11px]">click to collapse</span></summary>
-        <div class="mt-2 space-y-2 text-slate-700 leading-relaxed">
-          <p><b>Window:</b> merged PRs in the last <b>90 days</b>. Engineers with fewer than <b>3 merged PRs</b> are excluded (signal too noisy). Bots and the <code>posthog</code> service account are excluded.</p>
-          <p><b>The 5 signals</b> (each z-scored across the eligible pool, then weighted):</p>
-          <ul class="list-disc pl-5 space-y-1">
-            <li><b>Surviving code (25%)</b> — sum of additions per merged PR, capped at 2,000 lines/PR to prevent one big PR from dominating. PRs whose title is reverted by a later "Revert ..." PR receive 40% credit.</li>
-            <li><b>Review leverage (25%)</b> — number of PRs where the engineer left an <i>approving</i> review with at least one comment ≥25 chars (filters out "lgtm" / "👍").</li>
-            <li><b>Cross-area reach (15%)</b> — number of distinct top-level directories touched across their merged PRs. Captures breadth of trust.</li>
-            <li><b>Incident work (20%)</b> — merged PRs that closed an issue (or were themselves) labeled <code>bug / incident / p0 / p1 / sev / hotfix / regression / outage</code>.</li>
-            <li><b>Review-graph centrality (15%)</b> — PageRank (α=0.85) on the directed reviewer→author graph. Whose review do other high-impact people seek?</li>
-          </ul>
-          <p><b>Composite</b> = Σ weight × z-score. We then min-max normalize to 0–100 for display. The stacked bar on each card shows each signal's <i>weighted contribution</i> to the composite — positive segments to the right, negative (below-average) signals are clipped to zero in the bar but reflected in the score.</p>
-          <p><b>Limitations</b> — we don't read code semantics, so "complexity" is approximated by reach + size cap. Outside contributors and very new hires are under-counted. Review centrality is sensitive to who reviews whom; a small clique can inflate each other.</p>
-        </div>
-      </details>
-    </aside>
-  </section>
-
-  <footer class="mt-5 text-[11px] text-slate-500">
-    Data: GitHub GraphQL API · github.com/PostHog/posthog · static page, all numbers precomputed in <code>web/data.json</code>.
-  </footer>
-</main>
-
-<script>
-const COLORS = {
-  surviving_code: "#0ea5e9",
-  review_leverage: "#22c55e",
-  cross_area: "#a855f7",
-  incident_work: "#f97316",
-  review_centrality: "#eab308",
-};
-const NAMES = {
-  surviving_code: "Surviving code",
-  review_leverage: "Review leverage",
-  cross_area: "Cross-area reach",
-  incident_work: "Incident work",
-  review_centrality: "Centrality",
-};
-
-(async () => {
-  const data = await (await fetch("data.json?v=" + Date.now())).json();
-  const since = new Date(data.window_since);
-  document.getElementById("meta-window").textContent = `Window: ${since.toISOString().slice(0,10)} → today`;
-  document.getElementById("meta-counts").textContent = `${data.n_prs.toLocaleString()} merged PRs · ${data.n_eligible} eligible engineers`;
-  document.getElementById("meta-stamp").textContent = new Date().toISOString().replace("T"," ").slice(0,16) + " UTC";
-
-  // Cards
-  const cards = document.getElementById("cards");
-  const top5 = data.engineers.slice(0, 5);
-  // Build stacked bars: only positive weighted contributions; if all negative, fill with neutral
-  for (const e of top5) {
-    const bd = e.breakdown;
-    const positives = Object.entries(bd).filter(([_, v]) => v > 0);
-    const totalPos = positives.reduce((s, [_, v]) => s + v, 0) || 1;
-    const segments = positives.map(([k, v]) => ({k, pct: (v/totalPos)*100, contrib: v}));
-    const segHTML = segments.map(s => `<div class="seg pill" style="width:${s.pct.toFixed(2)}%; background:${COLORS[s.k]}" title="${NAMES[s.k]}: +${s.contrib.toFixed(2)} weighted z"></div>`).join("");
-    const allBars = `<div class="flex w-full h-3.5 bg-slate-100 rounded-full overflow-hidden">${segHTML || '<div class="w-full bg-slate-200"></div>'}</div>`;
-
-    const m = e.metrics;
-    const metricsHTML = `
-      <div class="grid grid-cols-5 gap-2 text-[11px] text-center mt-2">
-        ${[
-          ["surviving_code", `${Math.round(m.surviving_code).toLocaleString()}`, "lines (capped)"],
-          ["review_leverage", m.review_leverage, "deep reviews"],
-          ["cross_area", m.cross_area, "areas touched"],
-          ["incident_work", m.incident_work, "incident PRs"],
-          ["review_centrality", m.review_centrality.toFixed(3), "PageRank"],
-        ].map(([k, v, label]) =>
-          `<div class="rounded-md py-1 px-1" style="background:${COLORS[k]}1a">
-             <div class="font-semibold pill text-slate-800">${v}</div>
-             <div class="text-slate-500">${label}</div>
-           </div>`
-        ).join("")}
-      </div>`;
-
-    const topPRsHTML = e.top_prs.map(p =>
-      `<a class="block truncate text-[11px] text-blue-700 hover:underline" target="_blank" href="https://github.com/PostHog/posthog/pull/${p.number}">#${p.number} · ${p.title.replace(/</g,"&lt;")}</a>`
-    ).join("");
-
-    const areasHTML = e.areas.slice(0, 6).map(a => `<span class="inline-block bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 text-[10px] mr-1 mb-1">${a}</span>`).join("");
-
-    cards.insertAdjacentHTML("beforeend", `
-      <article class="card bg-white border border-slate-200 rounded-xl p-4">
-        <div class="flex items-start gap-4">
-          <img class="w-12 h-12 rounded-full border" src="https://github.com/${e.login}.png?size=96" alt="${e.login}">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-baseline justify-between gap-2 flex-wrap">
-              <div class="flex items-baseline gap-2">
-                <span class="text-xs text-slate-400 font-mono">#${e.rank}</span>
-                <a href="https://github.com/${e.login}" target="_blank" class="font-semibold text-slate-900 hover:underline">${e.login}</a>
-                <span class="text-xs text-slate-500">· ${m.pr_count} merged PRs</span>
-              </div>
-              <div class="text-right">
-                <div class="text-xl font-bold pill text-slate-900">${e.score.toFixed(1)}<span class="text-xs font-normal text-slate-400"> / 100</span></div>
-                <div class="text-[10px] text-slate-500">composite z = ${e.raw_composite.toFixed(2)}</div>
-              </div>
-            </div>
-            <div class="text-sm text-slate-700 mt-1">${e.headline}</div>
-            <div class="mt-2">${allBars}</div>
-            ${metricsHTML}
-            <div class="mt-2 flex flex-wrap">${areasHTML}</div>
-            <div class="mt-1">${topPRsHTML}</div>
+    <div class="grid grid-cols-12 gap-5">
+      <div class="col-span-8">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Top 5 by impact</h2>
+          <div class="text-[11px] text-slate-500 flex items-center gap-3 flex-wrap">
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#0ea5e9"></span>Surviving code</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#22c55e"></span>Review leverage</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#a855f7"></span>Cross-area</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#f97316"></span>Incident work</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:#eab308"></span>Centrality</span>
           </div>
         </div>
-      </article>
-    `);
-  }
+        <div id="cards" class="grid grid-cols-1 gap-3"></div>
+      </div>
 
-  // Comparison table
-  const cmp = document.getElementById("comparison-table");
-  for (const x of data.by_pr_count) {
-    const onTop5 = data.top5.includes(x.login);
-    cmp.insertAdjacentHTML("beforeend",
-      `<tr class="border-t border-slate-100">
-         <td class="py-1"><a class="text-blue-700 hover:underline" href="https://github.com/${x.login}" target="_blank">${x.login}</a></td>
-         <td class="py-1 text-right pill">${x.pr_count}</td>
-         <td class="py-1 text-right pill ${onTop5 ? 'text-emerald-600 font-semibold' : 'text-slate-500'}">#${x.rank_by_impact}${onTop5 ? ' ✓' : ''}</td>
-       </tr>`);
-  }
+      <aside class="col-span-4 flex flex-col gap-4">
+        <div class="bg-white border border-slate-200 rounded-xl p-4">
+          <h3 class="text-sm font-semibold mb-1">Why not just count PRs?</h3>
+          <p class="text-xs text-slate-600 mb-2">Volume ≠ leverage. Below: the 5 highest-PR engineers and where each lands on the impact ranking.</p>
+          <table class="w-full text-xs"><thead><tr class="text-slate-500 text-left"><th class="py-1">Engineer</th><th class="py-1 text-right">PRs</th><th class="py-1 text-right">Impact rank</th></tr></thead><tbody id="comparison-table"></tbody></table>
+        </div>
 
-  // Network graph: simple circular layout
-  const N = data.graph.nodes;
-  const E = data.graph.edges;
-  const cx = 0, cy = 0, R = 1;
-  const pos = {};
-  N.forEach((n, i) => {
-    const a = (i / N.length) * 2 * Math.PI - Math.PI/2;
-    pos[n.id] = [cx + R * Math.cos(a), cy + R * Math.sin(a)];
-  });
-  const edgeTraces = E.map(e => ({
-    type: "scatter", mode: "lines",
-    x: [pos[e.source][0], pos[e.target][0]],
-    y: [pos[e.source][1], pos[e.target][1]],
-    line: { width: 1 + Math.log(e.weight + 1) * 1.4, color: "#94a3b8" },
-    hoverinfo: "text", text: `${e.source} → ${e.target} · ${e.weight} reviews`,
-    showlegend: false,
-  }));
-  const sizes = N.map(n => 24 + n.centrality * 700);
-  const nodeTrace = {
-    type: "scatter", mode: "markers+text",
-    x: N.map(n => pos[n.id][0]), y: N.map(n => pos[n.id][1]),
-    text: N.map(n => n.id), textposition: "top center",
-    marker: { size: sizes, color: "#0ea5e9", line: { color: "white", width: 2 } },
-    hovertext: N.map(n => `${n.id}<br>impact ${n.score.toFixed(1)}<br>PageRank ${n.centrality.toFixed(3)}`),
-    hoverinfo: "text", showlegend: false,
-  };
-  Plotly.newPlot("graph", [...edgeTraces, nodeTrace], {
-    margin: { l: 10, r: 10, t: 10, b: 10 },
-    xaxis: { visible: false, range: [-1.6, 1.6] },
-    yaxis: { visible: false, range: [-1.4, 1.4], scaleanchor: "x" },
-    paper_bgcolor: "white", plot_bgcolor: "white",
-  }, { displayModeBar: false, responsive: true });
-})();
-</script>
+        <div class="bg-white border border-slate-200 rounded-xl p-4">
+          <h3 class="text-sm font-semibold mb-1">Area leaders</h3>
+          <p class="text-[11px] text-slate-500 mb-2">Top author per major product area. Concentration is healthy across the board.</p>
+          <table class="w-full text-xs"><thead><tr class="text-slate-500 text-left"><th class="py-1">Area</th><th class="py-1">Leader</th><th class="py-1 text-right">Share</th></tr></thead><tbody id="area-leaders"></tbody></table>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-xl p-4">
+          <h3 class="text-sm font-semibold mb-1">Top-5 review network</h3>
+          <p class="text-[11px] text-slate-500 mb-1">Edge = reviewer → author. Node size = PageRank.</p>
+          <div id="graph" style="height:200px"></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ===================== EXPLORE ===================== -->
+  <section id="tab-explore" class="hidden space-y-5">
+    <div class="grid grid-cols-12 gap-5">
+      <div class="col-span-4 bg-white border border-slate-200 rounded-xl p-4 self-start sticky top-[80px]">
+        <h3 class="text-sm font-semibold">Reweight signals (sensitivity)</h3>
+        <p class="text-[11px] text-slate-500 mb-3">Drag any slider to re-rank instantly. Tests how robust the top-5 is to disagreement on weights.</p>
+        <div id="sliders" class="space-y-3"></div>
+        <button id="reset-weights" class="mt-3 text-xs text-blue-600 hover:underline">↺ reset to defaults</button>
+        <div class="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500">
+          <b>Top 5 with current weights:</b>
+          <ol id="reweight-top5" class="list-decimal pl-5 mt-1 space-y-0.5"></ol>
+        </div>
+      </div>
+      <div class="col-span-8 bg-white border border-slate-200 rounded-xl p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold">All eligible engineers <span class="text-slate-400 font-normal" id="explore-count"></span></h3>
+          <input id="explore-search" placeholder="filter by login..." class="text-xs border border-slate-200 rounded-lg px-2 py-1 w-48"/>
+        </div>
+        <div class="overflow-auto" style="max-height: 70vh">
+          <table class="w-full text-xs">
+            <thead class="sticky top-0 bg-white">
+              <tr class="text-slate-500 text-left border-b border-slate-100">
+                <th class="py-1.5 px-2">#</th>
+                <th class="py-1.5 px-2">Engineer</th>
+                <th class="py-1.5 px-2 text-right">Score</th>
+                <th class="py-1.5 px-2 text-right">PRs</th>
+                <th class="py-1.5 px-2 text-right">Surviving</th>
+                <th class="py-1.5 px-2 text-right">Reviews</th>
+                <th class="py-1.5 px-2 text-right">Areas</th>
+                <th class="py-1.5 px-2 text-right">Incidents</th>
+                <th class="py-1.5 px-2 text-right">Cent.</th>
+              </tr>
+            </thead>
+            <tbody id="explore-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== ASK ASKY ===================== -->
+  <section id="tab-ask" class="hidden">
+    <div class="grid grid-cols-12 gap-5">
+      <div class="col-span-8 bg-white border border-slate-200 rounded-2xl p-5 flex flex-col" style="height: 78vh">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h2 class="text-lg font-semibold flex items-center gap-2">
+              <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span> Ask AI · grounded Q&amp;A on this dataset
+            </h2>
+            <p class="text-xs text-slate-500">Multi-agent: <b>Pre-guard → Researcher → Analyst → Critic</b>. Every answer cites the data fields it used.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="key-btn" class="text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700">⚙ Configure keys</button>
+          </div>
+        </div>
+        <div id="chat" class="flex-1 overflow-auto pr-2 space-y-4"></div>
+        <form id="chat-form" class="mt-3 flex gap-2 border-t border-slate-100 pt-3">
+          <input id="chat-input" autocomplete="off" placeholder="Ask about engineers, areas, ranking sensitivity, the methodology..." class="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm"/>
+          <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm hover:bg-slate-700">Ask</button>
+        </form>
+      </div>
+      <aside class="col-span-4 space-y-4">
+        <div class="bg-white border border-slate-200 rounded-xl p-4">
+          <h3 class="text-sm font-semibold mb-2">Try a question</h3>
+          <div id="seed-questions" class="space-y-1.5"></div>
+        </div>
+        <div class="bg-white border border-slate-200 rounded-xl p-4">
+          <h3 class="text-sm font-semibold mb-1">Agent pipeline</h3>
+          <p class="text-[11px] text-slate-500 mb-2">Updates live as Ask AI processes each question.</p>
+          <ol id="pipeline" class="space-y-1.5 text-xs"></ol>
+        </div>
+        <div class="bg-white border border-slate-200 rounded-xl p-4 text-xs">
+          <h3 class="text-sm font-semibold mb-1">Guardrails</h3>
+          <ul class="list-disc pl-4 space-y-1 text-slate-600">
+            <li><b>Scope guard</b> — rejects questions outside the dataset.</li>
+            <li><b>Prompt-injection guard</b> — strips system-override patterns.</li>
+            <li><b>Hallucination guard</b> — every <code>@login</code> in the answer must exist in <code>data.json</code>.</li>
+            <li><b>Citation guard</b> — every quantitative claim must cite a data path.</li>
+            <li><b>LangSmith tracing</b> (optional) — full agent trace if you supply a key.</li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ===================== METHODOLOGY ===================== -->
+  <section id="tab-method" class="hidden">
+    <div class="bg-white border border-slate-200 rounded-2xl p-6 max-w-3xl">
+      <h2 class="text-lg font-semibold mb-2">Methodology</h2>
+      <p class="text-sm text-slate-600 mb-3">Open and reproducible. The <a class="text-blue-700 underline" href="https://github.com/Rimcode-ai/posthog-impact-dashboard" target="_blank">repo</a> contains the fetcher, analyzer, and rendered <code>data.json</code>.</p>
+
+      <h3 class="font-semibold text-sm mt-4">Window &amp; eligibility</h3>
+      <p class="text-sm text-slate-700">Merged PRs in the last <b>90 days</b>. Engineers with fewer than <b>3 merged PRs</b> are excluded (signal too noisy). Bots and the <code>posthog</code> service account are excluded.</p>
+
+      <h3 class="font-semibold text-sm mt-4">The 5 signals (each z-scored, then weighted)</h3>
+      <ul class="text-sm text-slate-700 list-disc pl-5 space-y-1">
+        <li><b>Surviving code (25%)</b> — additions per merged PR, capped at <b>2,000 lines/PR</b>. PRs whose title is reverted by a later "Revert ..." PR receive 40% credit.</li>
+        <li><b>Review leverage (25%)</b> — PRs where the engineer left an <i>approving</i> review with at least one comment ≥25 chars (filters out "lgtm", "👍").</li>
+        <li><b>Cross-area reach (15%)</b> — distinct top-level <b>product</b> directories touched. Config / lockfiles are filtered out.</li>
+        <li><b>Incident work (20%)</b> — merged PRs that were themselves, or closed an issue, labeled <code>bug / incident / p0 / p1 / sev / hotfix / regression / outage</code>.</li>
+        <li><b>Review-graph centrality (15%)</b> — PageRank (α=0.85) on the directed reviewer→author graph.</li>
+      </ul>
+
+      <h3 class="font-semibold text-sm mt-4">Composite</h3>
+      <p class="text-sm text-slate-700">Σ weight × z-score, then min-max normalized to 0–100 for display. Each card's stacked bar shows positive weighted contributions; below-pool-mean signals are clipped from the bar but reflected in the score.</p>
+
+      <h3 class="font-semibold text-sm mt-4">Ask AI agent &amp; guardrails</h3>
+      <ul class="text-sm text-slate-700 list-disc pl-5 space-y-1">
+        <li><b>Pipeline:</b> deterministic Pre-guard → Researcher (LLM) → Analyst (LLM) → Critic (deterministic + LLM check).</li>
+        <li><b>Pre-guard:</b> regex scope check (must reference engineers, impact, posthog, dataset terms) + prompt-injection token strip.</li>
+        <li><b>Hallucination guard:</b> any login mentioned in the answer must appear in <code>data.json</code>; failures are flagged before display.</li>
+        <li><b>Citation guard:</b> answers without a <code>cites:</code> reference are blocked.</li>
+        <li><b>LangSmith tracing</b> via direct REST POST when the user supplies a key.</li>
+      </ul>
+
+      <h3 class="font-semibold text-sm mt-4">Limitations</h3>
+      <ul class="text-sm text-slate-700 list-disc pl-5 space-y-1">
+        <li>Code semantics are not parsed; "complexity" is approximated by reach + the per-PR cap.</li>
+        <li>Outside contributors and very new hires are under-counted; the &lt;3 PR floor excludes them.</li>
+        <li>Review centrality is sensitive to who reviews whom; a tight clique can reinforce each other.</li>
+        <li>Window is 90 days — engineers on parental leave / sabbatical / cross-org work are not visible here.</li>
+      </ul>
+
+      <h3 class="font-semibold text-sm mt-4">Reproduce</h3>
+      <pre class="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs leading-relaxed overflow-auto"><code>git clone https://github.com/Rimcode-ai/posthog-impact-dashboard
+export GITHUB_TOKEN=ghp_...
+python3 fetch.py            # ~90s, writes raw.json
+python3 analyze.py          # writes docs/data.json
+open docs/index.html</code></pre>
+    </div>
+  </section>
+
+</main>
+
+<div id="key-modal" class="fixed inset-0 bg-slate-900/50 hidden items-center justify-center z-50">
+  <div class="bg-white rounded-2xl p-6 w-[440px] shadow-2xl">
+    <h3 class="font-semibold text-base mb-1">Configure Ask AI</h3>
+    <p class="text-xs text-slate-500 mb-3">Keys are stored only in your browser's <code>localStorage</code> and never leave this page (calls go directly to Anthropic / LangSmith from your browser).</p>
+    <label class="text-xs text-slate-600">Anthropic API key (for arbitrary questions)</label>
+    <input id="anthropic-key" type="password" placeholder="sk-ant-..." class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-2"/>
+    <label class="text-xs text-slate-600">LangSmith API key (optional, for tracing)</label>
+    <input id="langsmith-key" type="password" placeholder="ls__..." class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-2"/>
+    <label class="text-xs text-slate-600">LangSmith project name</label>
+    <input id="langsmith-project" type="text" placeholder="posthog-impact-asky" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-3"/>
+    <div class="flex justify-end gap-2">
+      <button id="key-clear" class="text-xs px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-800">Clear</button>
+      <button id="key-cancel" class="text-xs px-3 py-1.5 rounded-lg bg-slate-100">Cancel</button>
+      <button id="key-save" class="text-xs px-3 py-1.5 rounded-lg bg-slate-900 text-white">Save</button>
+    </div>
+    <p class="text-[10px] text-slate-400 mt-3">Without a key, Ask AI still works with <b>baked answers</b> for the seed questions — pre-computed from the dataset, no API call needed.</p>
+  </div>
+</div>
+
+<footer class="max-w-[1440px] mx-auto px-6 py-6 text-[11px] text-slate-500 flex items-center justify-between">
+  <div>Static site · all numbers precomputed in <code>data.json</code> · GitHub GraphQL API</div>
+  <div>Methodology open · MIT license</div>
+</footer>
+
+<script src="./asky.js"></script>
+<script src="./app.js"></script>
 </body>
 </html>

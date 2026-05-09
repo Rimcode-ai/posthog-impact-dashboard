@@ -130,7 +130,7 @@ test.describe("Ask AI", () => {
     await page.goto(URL, { waitUntil: "networkidle" });
     await page.locator("button[data-tab='ask']").click();
     await page.waitForSelector("#chat > div", { state: "attached" });
-    await expect(page.locator("#chat")).toContainText("Pre-guard → Researcher → Analyst → Critic");
+    await expect(page.locator("#chat")).toContainText("Pre-guard → Researcher → Analyst");
     await expect(page.locator("#chat > div")).toHaveCount(1);
   });
 

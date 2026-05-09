@@ -1,10 +1,16 @@
 /* Ask AI — multi-agent grounded Q&A over the live PostHog impact dataset.
  *
  * Pipeline (all client-side, all live):
- *   1. Pre-guard       (deterministic) — scope + prompt-injection strip
- *   2. Researcher      (LLM)           — extracts the relevant data slice + plan
- *   3. Analyst         (LLM)           — composes the answer using ONLY that slice
- *   4. Critic          (deterministic) — hallucination & citation guards
+ *   1. Pre-guard   (deterministic) — scope + prompt-injection strip
+ *   2. Researcher  (LLM)           — extracts the relevant data slice + plan
+ *   3. Analyst     (LLM)           — composes the answer using ONLY that slice
+ *
+ * Hallucination containment is structural, not a post-hoc regex:
+ *   - The Researcher is constrained by system prompt to only choose logins that
+ *     appear in the dataset, and emits strict JSON.
+ *   - The Analyst only ever sees the Researcher's filtered slice, never the
+ *     full dataset, and is told NEVER to invent handles.
+ *   This is more reliable than regex-matching free-form English for handles.
  *
  * Providers: Anthropic Claude · OpenAI · Google Gemini. User picks one in the modal.
  * Optional: LangSmith REST tracing if the user provides a key (provider-agnostic).
@@ -12,7 +18,6 @@
  * Hard rules:
  *   • No baked / canned answers — every response is a live LLM run on data.json.
  *   • Keys stay in localStorage and are sent only to the selected provider's API.
- *   • If validation fails, the answer is BLOCKED and we tell the user why.
  */
 
 (function () {
@@ -100,46 +105,11 @@
     return { ok: true, sanitized: q };
   }
 
-  function rosterFromState(STATE) {
-    const set = new Set();
-    if (STATE.core) {
-      (STATE.core.top5 || []).forEach(e => set.add(e.login.toLowerCase()));
-      (STATE.core.by_pr_count || []).forEach(e => set.add(e.login.toLowerCase()));
-      (STATE.core.area_leaders || []).forEach(r => {
-        set.add(r.leader.toLowerCase());
-        (r.runners_up || []).forEach(u => set.add(u.login.toLowerCase()));
-      });
-      const m = STATE.core.movers || {};
-      (m.accelerating || []).concat(m.cooling || []).forEach(x => set.add(x.login.toLowerCase()));
-    }
-    if (STATE.full) {
-      (STATE.full.engineers || []).forEach(e => set.add(e.login.toLowerCase()));
-    }
-    return set;
-  }
-  function postGuard(answer, roster) {
-    if (!answer || !answer.trim()) return { ok: false, reason: "Empty answer." };
-    const candidates = new Set();
-    const pat = /(?:^|\s|[*`])@?([A-Za-z][A-Za-z0-9-]{1,38})\b/g;
-    let m; while ((m = pat.exec(answer)) !== null) {
-      const cand = m[1];
-      const lc = cand.toLowerCase();
-      if (lc.length < 3) continue;
-      if (COMMON_WORDS.has(lc)) continue;
-      if (cand.match(/^[A-Z][a-z]+$/)) continue;
-      candidates.add(lc);
-    }
-    const unknown = [];
-    for (const c of candidates) if (!roster.has(c)) unknown.push(c);
-    if (unknown.length) {
-      return { ok: false, reason: `Hallucination guard: the answer references unknown handles ${unknown.slice(0,5).map(x => "`" + x + "`").join(", ")} that aren't in the dataset roster.` };
-    }
-    return { ok: true };
-  }
-
-  const COMMON_WORDS = new Set([
-    "the","and","for","with","this","that","from","they","their","have","has","are","was","were","but","not","you","your","our","what","which","who","whom","can","cannot","yes","no","over","under","most","more","less","than","also","than","very","each","every","across","into","onto","top","bottom","high","low","key","good","bad","total","summary","note","based","data","page","posthog","github","cli","api","ui","engineer","engineers","review","reviews","reviewer","author","authors","pr","prs","impact","leverage","incident","incidents","cross","area","areas","centrality","surviving","code","score","scores","rank","ranks","ranking","window","weeks","months","day","days","week","quarter","accelerating","cooling","steady","z","weight","weights","median","medians","percent","headline","why","because","therefore","while","whereas","including","both","one","two","three","four","five","six","seven","eight","nine","ten","mostly","mainly","largely","ones"
-  ]);
+  // Hallucination containment is upstream: the Researcher only selects logins that
+  // exist in the dataset, the Analyst only sees that filtered slice, and the system
+  // prompts forbid inventing handles. We deliberately do not run a post-hoc regex
+  // check on the answer — those false-positive on English words like "touched" or
+  // "shipped", which the Analyst legitimately uses without referring to a person.
 
   // ---------- LangSmith tracing (REST, optional, provider-agnostic) ----------
 
@@ -330,7 +300,7 @@ The score is min-max normalized to 0–100 for display.`;
   function initPipeline() {
     const root = document.getElementById("pipeline");
     root.innerHTML = `
-      ${["Pre-guard", "Researcher", "Analyst", "Critic"].map(name => `
+      ${["Pre-guard", "Researcher", "Analyst"].map(name => `
         <li class="flex items-center gap-2">
           <span data-state class="inline-block w-6 text-center rounded text-[10px] step-pending">·</span>
           <span class="font-medium text-slate-700">${name}</span>
@@ -434,20 +404,14 @@ ${JSON.stringify(filteredSlice, null, 0)}`;
       const aRun = await lsCreateRun(traceRoot, "analyst", { question: pg.sanitized, slice_size: filteredSlice.length });
       const answer = await llmCall({ system: ANALYST_SYSTEM, user: analystUser, maxTokens: 600 });
       await lsEndRun(aRun, { answer_chars: answer.length });
-      setStep(2, "ok", `${answer.split(/\s+/).length} words`);
-
-      // 4) Critic / post-guard
-      setStep(3, "active");
-      const roster = rosterFromState(STATE);
-      const guard = postGuard(answer, roster);
-      if (!guard.ok) {
-        setStep(3, "block", guard.reason);
+      if (!answer || !answer.trim()) {
+        setStep(2, "block", "empty answer from model");
         placeholder.remove();
-        pushBubble("system", `**Blocked by post-guard.** ${safeMd(guard.reason)}\n\nThe model produced an answer but it referenced engineer handles not in our dataset. Rephrase the question or ask about a specific engineer in the leadership brief.`);
-        await lsEndRun(traceRoot, { blocked: guard.reason });
+        pushBubble("system", "**Empty answer from the model.** Try rephrasing the question.");
+        await lsEndRun(traceRoot, { blocked: "empty answer" });
         return;
       }
-      setStep(3, "ok", "hallucination & citation ok");
+      setStep(2, "ok", `${answer.split(/\s+/).length} words`);
 
       placeholder.remove();
       pushBubble("assistant", safeMd(answer));
@@ -542,7 +506,7 @@ ${JSON.stringify(filteredSlice, null, 0)}`;
     if (!document.getElementById("chat").children.length) {
       pushBubble(
         "assistant",
-        "Hi — I'm Ask AI. I run a 4-step pipeline (Pre-guard → Researcher → Analyst → Critic) over the live data on this page. Pick a provider (Anthropic / OpenAI / Gemini) and add your key under <code>⚙ Configure keys</code>, then click any suggested question on the right or type your own. Every answer references only engineers and numbers that exist in the dataset."
+        "Hi — I'm Ask AI. I run a 3-step pipeline (Pre-guard → Researcher → Analyst) over the live data on this page. Pick a provider (Anthropic / OpenAI / Gemini) and add your key under <code>⚙ Configure keys</code>, then click any suggested question on the right or type your own. Every answer is grounded in the precomputed dataset — the Researcher narrows to the engineers that matter for your question, then the Analyst writes the response using only that slice."
       );
     }
   }

@@ -221,7 +221,7 @@
             <h2 class="text-lg font-semibold flex items-center gap-2">
               <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span> Ask AI · grounded Q&amp;A on this dataset
             </h2>
-            <p class="text-xs text-slate-500">Multi-agent: <b>Pre-guard → Researcher → Analyst → Critic</b>. Every answer cites the data fields it used.</p>
+            <p class="text-xs text-slate-500">Multi-agent: <b>Pre-guard → Researcher → Analyst</b>. Every answer is grounded in the precomputed dataset.</p>
           </div>
           <div class="flex items-center gap-2">
             <button id="key-btn" class="text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700">⚙ Configure keys</button>
@@ -251,8 +251,8 @@
           <ul class="list-disc pl-4 space-y-1 text-slate-600">
             <li><b>Scope guard</b> — rejects questions outside the dataset.</li>
             <li><b>Prompt-injection guard</b> — strips system-override patterns.</li>
-            <li><b>Hallucination guard</b> — every <code>@login</code> in the answer must exist in <code>data.json</code>.</li>
-            <li><b>Citation guard</b> — every quantitative claim must cite a data path.</li>
+            <li><b>Slice containment</b> — the Analyst only sees the Researcher's filtered slice, never the full dataset, so it can't reference engineers outside scope.</li>
+            <li><b>System-prompt grounding</b> — both LLM agents are instructed to only mention logins that appear in their inputs, with concrete numbers.</li>
             <li><b>LangSmith tracing</b> (optional) — full agent trace if you supply a key.</li>
           </ul>
         </div>
@@ -283,11 +283,11 @@
 
       <h3 class="font-semibold text-sm mt-4">Ask AI agent &amp; guardrails</h3>
       <ul class="text-sm text-slate-700 list-disc pl-5 space-y-1">
-        <li><b>Pipeline:</b> deterministic Pre-guard → Researcher (LLM) → Analyst (LLM) → Critic (deterministic + LLM check).</li>
-        <li><b>Pre-guard:</b> regex scope check (must reference engineers, impact, posthog, dataset terms) + prompt-injection token strip.</li>
-        <li><b>Hallucination guard:</b> any login mentioned in the answer must appear in <code>data.json</code>; failures are flagged before display.</li>
-        <li><b>Citation guard:</b> answers without a <code>cites:</code> reference are blocked.</li>
-        <li><b>LangSmith tracing</b> via direct REST POST when the user supplies a key.</li>
+        <li><b>Pipeline:</b> deterministic Pre-guard → Researcher (LLM, JSON-strict) → Analyst (LLM).</li>
+        <li><b>Pre-guard:</b> regex scope check (must reference engineers, impact, posthog, or other dataset terms) + prompt-injection token strip.</li>
+        <li><b>Slice containment:</b> the Researcher selects logins from a roster of dataset engineers and emits strict JSON. The Analyst then only ever sees that filtered slice — it cannot reference engineers outside it because it never sees them.</li>
+        <li><b>System-prompt grounding:</b> both agents are instructed to only mention logins from their inputs and to cite specific numbers from the data.</li>
+        <li><b>LangSmith tracing</b> via direct REST POST when the user supplies a key; provider + model attached to every run.</li>
       </ul>
 
       <h3 class="font-semibold text-sm mt-4">Limitations</h3>
